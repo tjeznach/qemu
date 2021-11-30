@@ -1,0 +1,9 @@
+# See documentation at docs/devel/tracing.rst
+
+# rivos-iommu.c
+rivos_iommu_dma(int bus, int slot, int func, const char *dir, unsigned long iova, unsigned long phys) "TLB %04x:%02x.%d %s 0x%lx -> 0x%lx"
+rivos_iommu_cmd(unsigned long l, unsigned long u) "CMD %08lx %08lx"
+rivos_iommu_dma_as(unsigned iommu_bdf, const char *name) "IOMMU %x DMA mapping %s"
+rivos_iommu_fault(unsigned bdf, int cause, unsigned long iova) "DMA device: 0x%0x error: %d iova: 0x%lx"
+rivos_iommu_irq(int vector) "IRQ %d"
+rivos_iommu_dbg(const char *s, unsigned long val) "RIVOS-IOMMU: %s [0x%lx]"
