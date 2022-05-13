@@ -49,7 +49,6 @@ config RISCV_VIRT
     select SIFIVE_TEST
     select VIRTIO_MMIO
     select FW_CFG_DMA
-    select PLATFORM_BUS
 
 config SIFIVE_E
     bool
