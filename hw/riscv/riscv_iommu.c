@@ -94,16 +94,14 @@ enum {
 
 /* private: translation context data */
 typedef struct RISCVIOMMUContext RISCVIOMMUContext;
+typedef struct RISCVIOMMUState RISCVIOMMUState;
 
 struct RISCVIOMMUState {
-    PCIDevice pci;        /* Parent device state */
-    MemoryRegion bar0;    /* PCI device BAR (including MSI-x config) */
-    MemoryRegion regs;    /* MMIO IOMMU Interface */
-
     uint8_t regs_rw[RIO_REG_SIZE];  /* MMIO register state */
     uint8_t regs_wc[RIO_REG_SIZE];  /* MMIO write-1-to-clear */
     uint8_t regs_ro[RIO_REG_SIZE];  /* MMIO read/only mask */
 
+    uint32_t devid;       /* IOMMU requester Id, 0 if not assigned. */
     uint32_t version;     /* Reported interface version number */
     bool enable_off;      /* Enable out-of-reset OFF mode (DMA disabled) */
     bool enable_msi;      /* Enable MSI / FLAT PAGE remapping */
@@ -126,6 +124,9 @@ struct RISCVIOMMUState {
     QemuCond core_cond;   /* Background processing wakeup signal */
     QemuMutex core_lock;  /* Global IOMMU lock, used for cache/regs updates */
     unsigned core_exec;   /* Processing thread execution actions */
+
+    /* interrupt delivery callback */
+    void (*notify)(RISCVIOMMUState *iommu, unsigned vector);
 
     QLIST_HEAD(, RISCVIOMMUSpace) spaces;
 };
@@ -166,23 +167,12 @@ static unsigned riscv_iommu_irq_vector(RISCVIOMMUState *s, int source)
     return (ivec >> (source * 4)) & 0x0F;
 }
 
-static void riscv_iommu_irq_use(RISCVIOMMUState *s, int source)
-{
-    msix_vector_use(&(s->pci), riscv_iommu_irq_vector(s, source));
-}
-
-static void riscv_iommu_irq_unuse(RISCVIOMMUState *s, int source)
-{
-    msix_vector_unuse(&(s->pci), riscv_iommu_irq_vector(s, source));
-}
-
 static void riscv_iommu_irq_assert(RISCVIOMMUState *s, int source)
 {
     uint32_t ipsr = riscv_iommu_reg_mod(s, RIO_REG_IPSR, (1 << source), 0);
 
-    if (msix_enabled(&(s->pci)) && !(ipsr & (1 << source))) {
-        const unsigned vector = riscv_iommu_irq_vector(s, source);
-        msix_notify(&(s->pci), vector);
+    if (s->notify &&  !(ipsr & (1 << source))) {
+        s->notify(s, riscv_iommu_irq_vector(s, source));
     }
 }
 
@@ -699,7 +689,6 @@ static void riscv_iommu_process_cq_db(RISCVIOMMUState *s)
     dma_addr_t addr;
     MemTxAttrs ma = MEMTXATTRS_UNSPECIFIED;
     uint32_t tail;
-    unsigned bdf = pci_get_bdf(&s->pci);
     uint32_t ctrl = ldl_le_p(&s->regs_rw[RIO_REG_CQ_CONTROL]);
     uint32_t err = 0;
 
@@ -721,8 +710,8 @@ static void riscv_iommu_process_cq_db(RISCVIOMMUState *s)
             break;
         }
 
-        trace_riscv_iommu_cmd(PCI_BUS_NUM(bdf), PCI_SLOT(bdf),
-                              PCI_FUNC(bdf), cmd.request, cmd.address);
+        trace_riscv_iommu_cmd(PCI_BUS_NUM(s->devid), PCI_SLOT(s->devid),
+                              PCI_FUNC(s->devid), cmd.request, cmd.address);
 
         int fun_op = get_field(cmd.request, RIO_CMD_MASK_FUN_OP);
 
@@ -836,14 +825,12 @@ static void riscv_iommu_process_cq_control(RISCVIOMMUState *s)
         s->cq_mask = (2ULL << get_field(base, RIO_CQ_MASK_LOG2SZ)) - 1;
         s->cq = PPN_PHYS(get_field(base, RIO_CQ_MASK_PPN));
         s->cq_head = 0;
-        riscv_iommu_irq_use(s, RIO_INT_CQ);
         stl_le_p(&s->regs_ro[RIO_REG_CQ_TAIL], ~s->cq_mask);
         stl_le_p(&s->regs_rw[RIO_REG_CQ_HEAD], s->cq_head);
         stl_le_p(&s->regs_rw[RIO_REG_CQ_TAIL], s->cq_head);
         ctrl_set = RIO_CQ_ACTIVE;
         ctrl_clr = RIO_CQ_BUSY | RIO_CQ_FAULT | RIO_CQ_ERROR | RIO_CQ_TIMEOUT;
     } else if (!enable && active) {
-        riscv_iommu_irq_unuse(s, RIO_INT_CQ);
         stl_le_p(&s->regs_ro[RIO_REG_CQ_TAIL], ~0);
         ctrl_set = 0;
         ctrl_clr = RIO_CQ_BUSY | RIO_CQ_ACTIVE;
@@ -868,14 +855,12 @@ static void riscv_iommu_process_fq_control(RISCVIOMMUState *s)
         s->fq_mask = (2ULL << get_field(base, RIO_FQ_MASK_LOG2SZ)) - 1;
         s->fq = PPN_PHYS(get_field(base, RIO_FQ_MASK_PPN));
         s->fq_tail = 0;
-        riscv_iommu_irq_use(s, RIO_INT_FQ);
         stl_le_p(&s->regs_rw[RIO_REG_FQ_HEAD], s->fq_tail);
         stl_le_p(&s->regs_rw[RIO_REG_FQ_TAIL], s->fq_tail);
         stl_le_p(&s->regs_ro[RIO_REG_FQ_HEAD], ~s->fq_mask);
         ctrl_set = RIO_FQ_ACTIVE;
         ctrl_clr = RIO_FQ_BUSY | RIO_FQ_FAULT | RIO_FQ_FULL;
     } else if (!enable && active) {
-        riscv_iommu_irq_unuse(s, RIO_INT_FQ);
         stl_le_p(&s->regs_ro[RIO_REG_FQ_HEAD], ~0);
         ctrl_set = 0;
         ctrl_clr = RIO_FQ_BUSY | RIO_FQ_ACTIVE;
@@ -900,14 +885,12 @@ static void riscv_iommu_process_pq_control(RISCVIOMMUState *s)
         s->pq_mask = (2ULL << get_field(base, RIO_PQ_MASK_LOG2SZ)) - 1;
         s->pq = PPN_PHYS(get_field(base, RIO_PQ_MASK_PPN));
         s->pq_tail = 0;
-        riscv_iommu_irq_use(s, RIO_INT_PQ);
         stl_le_p(&s->regs_rw[RIO_REG_PQ_HEAD], s->pq_tail);
         stl_le_p(&s->regs_rw[RIO_REG_PQ_TAIL], s->pq_tail);
         stl_le_p(&s->regs_ro[RIO_REG_PQ_HEAD], ~s->pq_mask);
         ctrl_set = RIO_PQ_ACTIVE;
         ctrl_clr = RIO_PQ_BUSY | RIO_PQ_FAULT | RIO_PQ_FULL;
     } else if (!enable && active) {
-        riscv_iommu_irq_unuse(s, RIO_INT_PQ);
         stl_le_p(&s->regs_ro[RIO_REG_PQ_HEAD], ~0);
         ctrl_set = 0;
         ctrl_clr = RIO_PQ_BUSY | RIO_PQ_ACTIVE;
@@ -1093,7 +1076,7 @@ static const MemoryRegionOps riscv_iommu_mmio_ops = {
     }
 };
 
-static void riscv_iommu_reg_init(RISCVIOMMUState *s)
+static void riscv_iommu_init(RISCVIOMMUState *s)
 {
     const uint64_t cap = set_field((
             (s->version & RIO_CAP_REVISION_MASK) |
@@ -1132,6 +1115,21 @@ static void riscv_iommu_reg_init(RISCVIOMMUState *s)
     stl_le_p(&s->regs_wc[RIO_REG_IPSR], ~0);
     stl_le_p(&s->regs_ro[RIO_REG_IVEC], 0);
     stq_le_p(&s->regs_rw[RIO_REG_DDTP], s->ddtp);
+
+    QLIST_INIT(&s->spaces);
+    qemu_cond_init(&s->core_cond);
+    qemu_mutex_init(&s->core_lock);
+    qemu_thread_create(&s->core_proc, "riscv-iommu-core",
+        riscv_iommu_core_proc, s, QEMU_THREAD_JOINABLE);
+}
+
+static void riscv_iommu_exit(RISCVIOMMUState *s)
+{
+    qatomic_or(&s->core_exec, BIT(RIO_EXEC_EXIT));
+    qemu_cond_signal(&s->core_cond);
+    qemu_thread_join(&s->core_proc);
+    qemu_cond_destroy(&s->core_cond);
+    qemu_mutex_destroy(&s->core_lock);
 }
 
 static AddressSpace *riscv_iommu_find_as(PCIBus *bus, void *opaque, int devfn)
@@ -1140,9 +1138,8 @@ static AddressSpace *riscv_iommu_find_as(PCIBus *bus, void *opaque, int devfn)
     RISCVIOMMUSpace *as;
     char name[64];
     uint32_t devid = PCI_BUILD_BDF(pci_bus_num(bus), devfn);
-    uint32_t iommu_devid = pci_get_bdf(&s->pci);
 
-    if (iommu_devid == devid) {
+    if (s->devid == devid) {
         /* No translation for IOMMU device itself. */
         return &address_space_memory;
     }
@@ -1175,8 +1172,8 @@ static AddressSpace *riscv_iommu_find_as(PCIBus *bus, void *opaque, int devfn)
         QLIST_INSERT_HEAD(&s->spaces, as, list);
         qemu_mutex_unlock(&s->core_lock);
 
-        trace_riscv_iommu_new(PCI_BUS_NUM(iommu_devid), PCI_SLOT(iommu_devid),
-            PCI_FUNC(iommu_devid), PCI_BUS_NUM(as->devid), PCI_SLOT(as->devid),
+        trace_riscv_iommu_new(PCI_BUS_NUM(s->devid), PCI_SLOT(s->devid),
+            PCI_FUNC(s->devid), PCI_BUS_NUM(as->devid), PCI_SLOT(as->devid),
             PCI_FUNC(as->devid));
     }
 
@@ -1184,26 +1181,41 @@ static AddressSpace *riscv_iommu_find_as(PCIBus *bus, void *opaque, int devfn)
 }
 
 /* RISC-V IOMMU PCI Device Emulation */
+
+struct RISCVIOMMUStatePci {
+    PCIDevice        pci;     /* Parent PCIe device state */
+    MemoryRegion     bar0;    /* PCI BAR (including MSI-x config) */
+    MemoryRegion     regs;    /* PCI MMIO interface */
+    RISCVIOMMUState  iommu;   /* common IOMMU state */
+};
+
+/* interrupt delivery callback */
+static void riscv_iommu_pci_notify(RISCVIOMMUState *iommu, unsigned vector)
+{
+    RISCVIOMMUStatePci *s = container_of(iommu, RISCVIOMMUStatePci, iommu);
+
+    if (msix_enabled(&(s->pci))) {
+        msix_notify(&(s->pci), vector);
+    }
+}
+
 static void riscv_iommu_pci_realize(PCIDevice *dev, Error **errp)
 {
     DeviceState *d = DEVICE(dev);
-    RISCVIOMMUState *s = RISCV_IOMMU_PCI(d);
+    RISCVIOMMUStatePci *s = RISCV_IOMMU_PCI(d);
+    RISCVIOMMUState *iommu = &s->iommu;
     const uint64_t bar_size =
-        pow2ceil(QEMU_ALIGN_UP(sizeof(s->regs_rw), TARGET_PAGE_SIZE));
+        pow2ceil(QEMU_ALIGN_UP(sizeof(iommu->regs_rw), TARGET_PAGE_SIZE));
     Error *err = NULL;
 
-    QLIST_INIT(&s->spaces);
-    qemu_cond_init(&s->core_cond);
-    qemu_mutex_init(&s->core_lock);
-    riscv_iommu_reg_init(s);
+    iommu->devid = pci_get_bdf(dev);
 
-    qemu_thread_create(&s->core_proc, "riscv-iommu-core",
-        riscv_iommu_core_proc, s, QEMU_THREAD_JOINABLE);
+    riscv_iommu_init(iommu);
 
     memory_region_init(&s->bar0, OBJECT(s),
             "riscv-iommu-bar0", bar_size);
-    memory_region_init_io(&s->regs, OBJECT(s), &riscv_iommu_mmio_ops, s,
-            "riscv-iommu-regs", sizeof(s->regs_rw));
+    memory_region_init_io(&s->regs, OBJECT(s), &riscv_iommu_mmio_ops, iommu,
+            "riscv-iommu-regs", sizeof(iommu->regs_rw));
     memory_region_add_subregion(&s->bar0, 0, &s->regs);
 
     pcie_endpoint_cap_init(dev, 0x80);
@@ -1224,6 +1236,12 @@ static void riscv_iommu_pci_realize(PCIDevice *dev, Error **errp)
     } else if (ret < 0) {
         error_propagate(errp, err);
         return;
+    } else {
+        /* mark all allocated MSIx vectors as used. */
+        while (ret-- > 0) {
+            msix_vector_use(dev, ret);
+        }
+        iommu->notify = riscv_iommu_pci_notify;
     }
 
     /* TODO: find root port bus ranges and use for FDT/ACPI generation. */
@@ -1235,20 +1253,16 @@ static void riscv_iommu_pci_realize(PCIDevice *dev, Error **errp)
         return;
     }
 
-    pci_setup_iommu(bus, riscv_iommu_find_as, s);
+    pci_setup_iommu(bus, riscv_iommu_find_as, iommu);
 }
 
 static void riscv_iommu_pci_exit(PCIDevice *dev)
 {
     DeviceState *d = DEVICE(dev);
-    RISCVIOMMUState *s = RISCV_IOMMU_PCI(d);
+    RISCVIOMMUStatePci *s = RISCV_IOMMU_PCI(d);
 
     pci_setup_iommu(pci_device_root_bus(dev), NULL, NULL);
-    qatomic_or(&s->core_exec, BIT(RIO_EXEC_EXIT));
-    qemu_cond_signal(&s->core_cond);
-    qemu_thread_join(&s->core_proc);
-    qemu_cond_destroy(&s->core_cond);
-    qemu_mutex_destroy(&s->core_lock);
+    riscv_iommu_exit(&s->iommu);
 }
 
 static const VMStateDescription riscv_iommu_vmstate = {
@@ -1257,12 +1271,12 @@ static const VMStateDescription riscv_iommu_vmstate = {
 };
 
 static Property riscv_iommu_properties[] = {
-    DEFINE_PROP_UINT32("version", RISCVIOMMUState, version, 0x02),
-    DEFINE_PROP_BOOL("msi", RISCVIOMMUState, enable_msi, TRUE),
-    DEFINE_PROP_BOOL("ats", RISCVIOMMUState, enable_ats, TRUE),
-    DEFINE_PROP_BOOL("off", RISCVIOMMUState, enable_off, FALSE),
-    DEFINE_PROP_BOOL("s-stage", RISCVIOMMUState, enable_s_stage, TRUE),
-    DEFINE_PROP_BOOL("g-stage", RISCVIOMMUState, enable_g_stage, TRUE),
+    DEFINE_PROP_UINT32("version", RISCVIOMMUStatePci, iommu.version, 0x02),
+    DEFINE_PROP_BOOL("msi", RISCVIOMMUStatePci, iommu.enable_msi, TRUE),
+    DEFINE_PROP_BOOL("ats", RISCVIOMMUStatePci, iommu.enable_ats, TRUE),
+    DEFINE_PROP_BOOL("off", RISCVIOMMUStatePci, iommu.enable_off, FALSE),
+    DEFINE_PROP_BOOL("s-stage", RISCVIOMMUStatePci, iommu.enable_s_stage, TRUE),
+    DEFINE_PROP_BOOL("g-stage", RISCVIOMMUStatePci, iommu.enable_g_stage, TRUE),
     DEFINE_PROP_END_OF_LIST(),
 };
 
@@ -1288,7 +1302,7 @@ static void riscv_iommu_pci_init(ObjectClass *klass, void *data)
 static const TypeInfo riscv_iommu_pci = {
     .name = TYPE_RISCV_IOMMU_PCI,
     .parent = TYPE_PCI_DEVICE,
-    .instance_size = sizeof(RISCVIOMMUState),
+    .instance_size = sizeof(RISCVIOMMUStatePci),
     .class_init = riscv_iommu_pci_init,
     .interfaces = (InterfaceInfo[]) {
         { INTERFACE_PCIE_DEVICE },
@@ -1357,8 +1371,8 @@ static const TypeInfo riscv_iommu_memory_region_info = {
 
 static void riscv_iommu_register_types(void)
 {
-    type_register_static(&riscv_iommu_pci);
     type_register_static(&riscv_iommu_memory_region_info);
+    type_register_static(&riscv_iommu_pci);
 }
 
 type_init(riscv_iommu_register_types);

@@ -301,12 +301,16 @@ typedef struct RISCVIOMMUEvent {
 
 /* QEMU RISC-V IOMMU Device Emulation Objects */
 
-#define TYPE_RISCV_IOMMU_PCI "x-riscv-iommu"
-OBJECT_DECLARE_SIMPLE_TYPE(RISCVIOMMUState, RISCV_IOMMU_PCI)
-typedef struct RISCVIOMMUState RISCVIOMMUState;
-
 #define TYPE_RISCV_IOMMU_MEMORY_REGION "x-riscv-iommu-mr"
 typedef struct RISCVIOMMUSpace RISCVIOMMUSpace;
+
+#define TYPE_RISCV_IOMMU_PCI "x-riscv-iommu-pci"
+OBJECT_DECLARE_SIMPLE_TYPE(RISCVIOMMUStatePci, RISCV_IOMMU_PCI)
+typedef struct RISCVIOMMUStatePci RISCVIOMMUStatePci;
+
+#define TYPE_RISCV_IOMMU_SYS "x-riscv-iommu-device"
+OBJECT_DECLARE_SIMPLE_TYPE(RISCVIOMMUStateSys, RISCV_IOMMU_SYS)
+typedef struct RISCVIOMMUStateSys RISCVIOMMUStateSys;
 
 #endif
 
