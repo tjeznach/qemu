@@ -996,11 +996,13 @@ static void create_fdt_fw_cfg(RISCVVirtState *s, const MemMapEntry *memmap)
 
 static void create_riscv_iommu_dt_binding(RISCVVirtState *s, uint16_t bdf)
 {
-    const char compat[] = "rivos,pci-iommu";
+    const char comp[] = "riscv,pci-iommu";
     MachineState *mc = MACHINE(s);
     uint32_t iommu_phandle;
     char *iommu_node;
     char *pci_node;
+    const char *iommu_map;
+    int len;
 
     pci_node = g_strdup_printf("/soc/pci@%lx",
             (long) virt_memmap[VIRT_PCIE_ECAM].base);
@@ -1008,16 +1010,25 @@ static void create_riscv_iommu_dt_binding(RISCVVirtState *s, uint16_t bdf)
 
     iommu_phandle = qemu_fdt_alloc_phandle(mc->fdt);
     qemu_fdt_add_subnode(mc->fdt, iommu_node);
-    qemu_fdt_setprop(mc->fdt, iommu_node, "compatible", compat, sizeof(compat));
+    qemu_fdt_setprop(mc->fdt, iommu_node, "compatible", comp, sizeof(comp));
     qemu_fdt_setprop_sized_cells(mc->fdt, iommu_node, "reg",
             1, bdf << 8, 1, 0, 1, 0, 1, 0, 1, 0);
     qemu_fdt_setprop_cell(mc->fdt, iommu_node, "#iommu-cells", 1);
     qemu_fdt_setprop_cell(mc->fdt, iommu_node, "phandle", iommu_phandle);
     g_free(iommu_node);
 
-    qemu_fdt_setprop_cells(mc->fdt, pci_node, "iommu-map",
-            0x0, iommu_phandle, 0x0, bdf,
-            bdf + 1, iommu_phandle, bdf + 1, 0xffff - bdf);
+    /* Read and update IOMMU mapping. */
+    iommu_map = qemu_fdt_getprop(mc->fdt, pci_node, "iommu-map", &len, NULL);
+    if (iommu_map) {
+        /* TODO: modify map and eliminate BDF and change IDs assignment */
+    } else {
+        uint32_t map[] = {0x00,    iommu_phandle, 0x00,    bdf,
+                          bdf + 1, iommu_phandle, bdf + 1, 0xffff - bdf };
+        for (len = 0; len < sizeof(map) / sizeof(map[0]); len++) {
+            map[len] = cpu_to_be32(map[len]);
+        }
+        qemu_fdt_setprop(mc->fdt, pci_node, "iommu-map", map, sizeof(map));
+    }
     g_free(pci_node);
 }
 

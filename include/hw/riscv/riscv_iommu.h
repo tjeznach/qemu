@@ -24,14 +24,13 @@
 
 /*
  * IOMMU Interface Specification - based on RISC-V Ziommu Document.
- * Published at https://github.com/riscv-non-isa/riscv-iommu
+ * Published at https://github.com/riscv-non-isa/riscv-iommu rev Aug 1st, 2022
  */
 
 /* I/O programming interface registers */
 #define RIO_REG_CAP             0x0000  /* Supported capabilities  */
 #define RIO_REG_FCTRL           0x0008  /* Features control */
 #define RIO_REG_DDTP            0x0010  /* Device Directory Table Pointer */
-#define RIO_REG_DDTP_HI         0x0014
 #define RIO_REG_CQ_BASE         0x0018  /* Command queue base/head/tail */
 #define RIO_REG_CQ_HEAD         0x0020
 #define RIO_REG_CQ_TAIL         0x0024
@@ -50,42 +49,47 @@
 #define RIO_REG_IOHPMCYCLES     0x0060
 #define RIO_REG_IOHPMCTR_BASE   0x0068
 #define RIO_REG_IOHPMEVT_BASE   0x0160
-#define RIO_REG_IOCNTSEC        0x0258
+#define RIO_REG_TR_REQ_IOVA     0x0258
+#define RIO_REG_TR_REQ_CTRL     0x0260
+#define RIO_REG_TR_RESPONSE     0x0268
 #define RIO_REG_IVEC            0x02F8  /* Interrupt cause to vector mapping */
+#define RIO_REG_MSI_CONFIG      0x0300
 
-#define RIO_REG_SIZE            0x0300  /* Spec. defined registers space */
+#define RIO_REG_SIZE            0x1000  /* Spec. defined registers space */
 
 /* Capabilities supported by the IOMMU, RIO_REG_CAP */
-#define RIO_CAP_S_SV32         (1 << 8)
-#define RIO_CAP_S_SV39         (1 << 9)
-#define RIO_CAP_S_SV48         (1 << 10)
-#define RIO_CAP_S_SV57         (1 << 11)
-#define RIO_CAP_SVNAPOT        (1 << 14)
-#define RIO_CAP_SVPBMT         (1 << 15)
-#define RIO_CAP_G_SV32         (1 << 16)
-#define RIO_CAP_G_SV39         (1 << 17)
-#define RIO_CAP_G_SV48         (1 << 18)
-#define RIO_CAP_G_SV57         (1 << 19)
-#define RIO_CAP_MSI_FLAT       (1 << 22)
-#define RIO_CAP_MSI_MRIF       (1 << 23)
-#define RIO_CAP_AMO            (1 << 24)
-#define RIO_CAP_ATS            (1 << 25)
-#define RIO_CAP_T2GPA          (1 << 26)
-#define RIO_CAP_END            (1 << 27)
-#define RIO_CAP_IGS_WIS        (1 << 26) /* 0: MSI | 1: WIS | 0: BOTH */
-#define RIO_CAP_IGS_BOTH       (1 << 26) /* 0:     | 0:     | 1:      */
-#define RIO_CAP_PMON           (1 << 30)
+#define RIO_CAP_S_SV32         (1ULL << 8)
+#define RIO_CAP_S_SV39         (1ULL << 9)
+#define RIO_CAP_S_SV48         (1ULL << 10)
+#define RIO_CAP_S_SV57         (1ULL << 11)
+#define RIO_CAP_SVNAPOT        (1ULL << 14)
+#define RIO_CAP_SVPBMT         (1ULL << 15)
+#define RIO_CAP_G_SV32         (1ULL << 16)
+#define RIO_CAP_G_SV39         (1ULL << 17)
+#define RIO_CAP_G_SV48         (1ULL << 18)
+#define RIO_CAP_G_SV57         (1ULL << 19)
+#define RIO_CAP_MSI_FLAT       (1ULL << 22)
+#define RIO_CAP_MSI_MRIF       (1ULL << 23)
+#define RIO_CAP_AMO            (1ULL << 24)
+#define RIO_CAP_ATS            (1ULL << 25)
+#define RIO_CAP_T2GPA          (1ULL << 26)
+#define RIO_CAP_END            (1ULL << 27)
+#define RIO_CAP_IGS_WIS        (1ULL << 28)
+#define RIO_CAP_IGS_BOTH       (1ULL << 29)
+#define RIO_CAP_HPM            (1ULL << 30)
+#define RIO_CAP_DBG            (1ULL << 31)
 
 #define RIO_CAP_REVISION_MASK   0x00000000000000FFULL
 #define RIO_CAP_PAS_MASK        0x0000003F00000000ULL
 
 /* Features control register, RIO_REG_FCTRL */
-#define RIO_FCTRL_END           (1 << 0)
-#define RIO_FCTRL_WIS           (1 << 1)
+#define RIO_FCTRL_END           (1ULL << 0)
+#define RIO_FCTRL_WIS           (1ULL << 1)
 
 /* Device directory table pointer */
 #define RIO_DDTP_MASK_PPN       0x00000FFFFFFFFFFFULL
 #define RIO_DDTP_MASK_MODE      0xF000000000000000ULL
+
 #define RIO_DDTE_MASK_PPN       0x00FFFFFFFFFFF000ULL
 
 #define RIO_DDTP_HI_BUSY        (1 << 27)
@@ -93,10 +97,10 @@
 /* Device directory mode values, within RIO_DDTP_MASK_MODE */
 #define RIO_DDTP_MODE_OFF       0
 #define RIO_DDTP_MODE_BARE      1
-#define RIO_DDTP_MODE_3LVL      2
+#define RIO_DDTP_MODE_1LVL      2
 #define RIO_DDTP_MODE_2LVL      3
-#define RIO_DDTP_MODE_1LVL      4
-#define RIO_DDTP_MODE_MAX       RIO_DDTP_MODE_1LVL
+#define RIO_DDTP_MODE_3LVL      4
+#define RIO_DDTP_MODE_MAX       RIO_DDTP_MODE_3LVL
 
 /* Command queue base register */
 #define RIO_CQ_MASK_LOG2SZ      0x000000000000001FULL
@@ -148,6 +152,28 @@
 #define RIO_IPSR_PMIP          (1 << RIO_INT_PM)
 #define RIO_IPSR_PQIP          (1 << RIO_INT_PQ)
 
+/* Interrupt vector mapping */
+#define RIO_IVEC_CQIV          (0x0F << 0)
+#define RIO_IVEC_FQIV          (0x0F << 4)
+#define RIO_IVEC_PMIV          (0x0F << 8)
+#define RIO_IVEC_PQIV          (0x0F << 12)
+
+/* Translation request interface */
+#define RIO_TRREQ_BUSY         (1ULL << 0)
+#define RIO_TRREQ_PRIV         (1ULL << 1)
+#define RIO_TRREQ_EXEC         (1ULL << 2)
+#define RIO_TRREQ_RO           (1ULL << 3)
+#define RIO_TRREQ_PV           (1ULL << 4)
+
+#define RIO_TRREQ_MASK_DID      0x000000FFFFFF0000ULL
+#define RIO_TRREQ_MASK_PID      0x0FFFFF0000000000ULL
+
+#define RIO_TRRSP_S             (1ULL << 44)
+#define RIO_TRRSP_FAULT         (1ULL << 47)
+
+#define RIO_TRRSP_MASK_PPN      0x00000FFFFFFFFFFFULL
+#define RIO_TRRSP_MASK_PBMT     0x0000600000000000ULL
+
 /* Device Context */
 typedef struct RISCVIOMMUDeviceContext {
     uint64_t  tc;          /* Translation Control */
@@ -166,23 +192,34 @@ typedef struct RISCVIOMMUDeviceContext {
 #define RIO_DCTC_T2GPA            (1ULL << 3)
 #define RIO_DCTC_DTF              (1ULL << 4)
 #define RIO_DCTC_PDTV             (1ULL << 5)
+#define RIO_DCTC_PRPR             (1ULL << 6)
 
 /* Shared MODE:ASID:PPN masks for GATP, SATP */
-#define RIO_ATP_MASK_PPN           SATP64_PPN
-#define RIO_ATP_MASK_GSCID         SATP64_ASID
-#define RIO_ATP_MASK_MODE          SATP64_MODE
+#define RIO_ATP_MASK_PPN           0x00000FFFFFFFFFFFULL
+#define RIO_ATP_MASK_GSCID         0x0FFFF00000000000ULL
+#define RIO_ATP_MASK_MODE          0xF000000000000000ULL
 
-#define RIO_ATP_MODE_BARE          VM_1_10_MBARE
-#define RIO_ATP_MODE_SV32          VM_1_10_SV32
-#define RIO_ATP_MODE_SV39          VM_1_10_SV39
-#define RIO_ATP_MODE_SV48          VM_1_10_SV48
-#define RIO_ATP_MODE_SV57          VM_1_10_SV57
+/* Shared MODE:ASID:PPN masks for GATP, SATP */
+#define RIO_ATP_MODE_BARE          0
+#define RIO_ATP_MODE_SV32          1
+#define RIO_ATP_MODE_SV39          8
+#define RIO_ATP_MODE_SV48          9
+#define RIO_ATP_MODE_SV57          10
+
+/* FSC mode field when TC.RIO_TC_PDTV is set */
+#define RIO_PDTP_MODE_BARE         0
+#define RIO_PDTP_MODE_PD20         1
+#define RIO_PDTP_MODE_PD17         2
+#define RIO_PDTP_MODE_PD8          3
 
 /* satp.mode when tc.RIO_DCTC_PDTV is set */
 #define RIO_PDTP_MODE_BARE         0
 #define RIO_PDTP_MODE_PD20         1
 #define RIO_PDTP_MODE_PD17         2
 #define RIO_PDTP_MODE_PD8          3
+
+#define RIO_PDTE_VALID            (1ULL << 0)
+#define RIO_PDTE_MASK_PPN          0x00FFFFFFFFFFF000ULL
 
 #define RIO_DCMSI_MASK_PPN         0x00000FFFFFFFFFFFULL
 #define RIO_DCMSI_MASK_MODE        0xF000000000000000ULL
@@ -193,7 +230,13 @@ typedef struct RISCVIOMMUDeviceContext {
 #define RIO_MSIPTE_V              (1ULL << 0)
 #define RIO_MSIPTE_W              (1ULL << 2)
 #define RIO_MSIPTE_C              (1ULL << 63)
+
 #define RIO_MSIPTE_MASK_PPN        0x003FFFFFFFFFFC00ULL
+#define RIO_MRIF_ADDR_MASK_PPN     0x003FFFFFFFFFFF80ULL
+
+#define RIO_MRIF_NPPN_MASK_PPN     0x003FFFFFFFFFFC00ULL
+#define RIO_MRIF_NPPN_MASK_N90     0x00000000000003FFULL
+#define RIO_MRIF_NPPN_MASK_N10     0x1000000000000000ULL
 
 typedef struct RISCVIOMMUProcessContext {
     uint64_t fsc;
@@ -226,23 +269,21 @@ typedef struct RISCVIOMMUCommand {
 #define RIO_IOTINVAL_MASK_PSCID    0x0000000FFFFF0000ULL
 #define RIO_IOTINVAL_MASK_GSCID    0x00FFFF0000000000ULL
 
-/* opcode == IODIR.* */
-#define RIO_CMD_IODIR_INV_DDT      0x002
-#define RIO_CMD_IODIR_PRE_DDT      0x082
-#define RIO_CMD_IODIR_INV_PDT      0x102
-#define RIO_CMD_IODIR_PRE_PDT      0x182
-
-#define RIO_IODIR_DID_VALID        0x0000000000000400ULL
-#define RIO_IODIR_MASK_PID         0x0000000FFFFF0000ULL
-#define RIO_IODIR_MASK_DID         0xFFFFFF0000000000ULL
-
 /* opcode == IOFENCE.* */
-#define RIO_CMD_IOFENCE_C          0x003
+#define RIO_CMD_IOFENCE_C          0x002
 
 #define RIO_IOFENCE_PR             0x0000000000000400ULL
 #define RIO_IOFENCE_PW             0x0000000000000800ULL
 #define RIO_IOFENCE_AV             0x0000000000001000ULL
 #define RIO_IOFENCE_MASK_DATA      0xFFFFFFFF00000000ULL
+
+/* opcode == IODIR.* */
+#define RIO_CMD_IODIR_INV_DDT      0x003
+#define RIO_CMD_IODIR_INV_PDT      0x083
+
+#define RIO_IODIR_DID_VALID        0x0000000000000400ULL
+#define RIO_IODIR_MASK_PID         0x0000000FFFFF0000ULL
+#define RIO_IODIR_MASK_DID         0xFFFFFF0000000000ULL
 
 /* opcode == ATS */
 #define RIO_CMD_ATS_INVAL          0x004
@@ -261,43 +302,48 @@ typedef struct RISCVIOMMUEvent {
 #define RIO_EVENT_MASK_PID         0x00000FFFFF000000ULL
 #define RIO_EVENT_PV               0x0000100000000000ULL
 #define RIO_EVENT_PRIV             0x0000200000000000ULL
-#define RIO_EVENT_MASK_CAUSE       0xFFF0000000000000ULL
 #define RIO_EVENT_MASK_TTYPE       0x000FC00000000000ULL
+#define RIO_EVENT_MASK_CAUSE       0xFFF0000000000000ULL
 
 /* RISC-V IOMMU Fault Transaction Type / Exception Codes */
 
-#define RIO_TTYP_NONE              0 /* Fault not caused by an inbound trx */
-#define RIO_TTYP_URX               1 /* Untranslated read for execute trx */
-#define RIO_TTYP_URD               2 /* Untranslated read transaction */
-#define RIO_TTYP_UWR               3 /* Untranslated write/AMO transaction */
-#define RIO_TTYP_TRX               4 /* Translated read for execute trx */
-#define RIO_TTYP_TRD               5 /* Translated read transaction */
-#define RIO_TTYP_TWR               6 /* Translated write/AMO transaction */
-#define RIO_TTYP_ATS               7 /* PCIe ATS Translation Request */
-#define RIO_TTYP_MRQ               8 /* Message Request */
+#define RIO_TTYP_NONE               0 /* Fault not caused by an inbound trx */
+#define RIO_TTYP_URX                1 /* Untranslated read for execute trx */
+#define RIO_TTYP_URD                2 /* Untranslated read transaction */
+#define RIO_TTYP_UWR                3 /* Untranslated write/AMO transaction */
+#define RIO_TTYP_TRX                4 /* Translated read for execute trx */
+#define RIO_TTYP_TRD                5 /* Translated read transaction */
+#define RIO_TTYP_TWR                6 /* Translated write/AMO transaction */
+#define RIO_TTYP_ATS                7 /* PCIe ATS Translation Request */
+#define RIO_TTYP_MRQ                8 /* Message Request */
 
-#define RIO_EXCP_RD_ALIGN          4 /* Read address misaligned */
-#define RIO_EXCP_RD_FAULT          5 /* Read access fault */
-#define RIO_EXCP_WR_ALIGN          6 /* Write/AMO address misaligned */
-#define RIO_EXCP_WR_FAULT          7 /* Write/AMO access fault */
-#define RIO_EXCP_PGFAULT_I        12 /* Instruction page fault */
-#define RIO_EXCP_PGFAULT_RD       13 /* Read page fault */
-#define RIO_EXCP_PGFAULT_WR       15 /* Write/AMO page fault */
-#define RIO_EXCP_GPGFAULT_I       20 /* Instruction guest page fault */
-#define RIO_EXCP_GPGFAULT_RD      21 /* Read guest-page fault */
-#define RIO_EXCP_GPGFAULT_WR      23 /* Write/AMO guest-page fault */
-#define RIO_EXCP_DMA_DISABLED    256 /* Inbound transactions disallowed */
-#define RIO_EXCP_DDT_FAULT       257 /* DDT entry load access fault */
-#define RIO_EXCP_DDT_INVALID     258 /* DDT entry not valid */
-#define RIO_EXCP_DDT_UNSUPPORTED 259 /* DDT entry misconfigured */
-#define RIO_EXCP_REQ_INVALID     260 /* Transaction type disallowed */
-#define RIO_EXCP_PDT_FAULT       261 /* PDT entry load access fault. */
-#define RIO_EXCP_PDT_INVALID     262 /* PDT entry not valid */
-#define RIO_EXCP_PDT_UNSUPPORTED 263 /* PDT entry misconfigured */
-#define RIO_EXCP_MSI_FAULT       264 /* MSI PTE load access fault */
-#define RIO_EXCP_MSI_INVALID     265 /* MSI PTE not valid */
-#define RIO_EXCP_MRIF_FAULT      266 /* MRIF access fault */
-
+#define RIO_CAUSE_EX_FAULT          1 /* Instruction access fault */
+#define RIO_CAUSE_RD_FAULT          5 /* Read access fault */
+#define RIO_CAUSE_WR_FAULT          7 /* Write/AMO access fault */
+#define RIO_CAUSE_EX_FAULT_S       12 /* Instruction page fault */
+#define RIO_CAUSE_RD_FAULT_S       13 /* Read page fault */
+#define RIO_CAUSE_WR_FAULT_S       15 /* Write/AMO page fault */
+#define RIO_CAUSE_EX_FAULT_G       20 /* Instruction guest page fault */
+#define RIO_CAUSE_RD_FAULT_G       21 /* Read guest-page fault */
+#define RIO_CAUSE_WR_FAULT_G       23 /* Write/AMO guest-page fault */
+#define RIO_CAUSE_DMA_DISABLED    256 /* Inbound transactions disallowed */
+#define RIO_CAUSE_DDT_FAULT       257 /* DDT entry load access fault */
+#define RIO_CAUSE_DDT_INVALID     258 /* DDT entry not valid */
+#define RIO_CAUSE_DDT_UNSUPPORTED 259 /* DDT entry misconfigured */
+#define RIO_CAUSE_REQ_INVALID     260 /* Transaction type disallowed */
+#define RIO_CAUSE_MSI_PTE_FAULT   261 /* MSI PTE load access fault */
+#define RIO_CAUSE_MSI_INVALID     262 /* MSI PTE not valid */
+#define RIO_CAUSE_MSI_UNSUPPORTED 263 /* MSI PTE entry misconfigured */
+#define RIO_CAUSE_MRIF_FAULT      264 /* MRIF access fault */
+#define RIO_CAUSE_PDT_FAULT       265 /* PDT load access fault */
+#define RIO_CAUSE_PDT_INVALID     266 /* PDT not valid */
+#define RIO_CAUSE_PDT_UNSUPPORTED 267 /* PDT entry misconfigured */
+#define RIO_CAUSE_DDT_CORRUPTED   268 /* DDT entry corrupted */
+#define RIO_CAUSE_PDT_CORRUPTED   269 /* PDT entry corrupted */
+#define RIO_CAUSE_MSI_CORRUPTED   270 /* MSI entry corrupted */
+#define RIO_CAUSE_MRIF_CORRUPTED  271 /* DDT entry corrupted */
+#define RIO_CAUSE_ERROR           272 /* Internal data error */
+#define RIO_CAUSE_MSI_FAULT       273 /* MSI write access fault */
 
 /* QEMU RISC-V IOMMU Device Emulation Objects */
 
