@@ -87,12 +87,11 @@
 #define RIO_FCTRL_WIS           (1ULL << 1)
 
 /* Device directory table pointer */
+#define RIO_DDTP_BUSY          (1ULL << 59)
 #define RIO_DDTP_MASK_PPN       0x00000FFFFFFFFFFFULL
 #define RIO_DDTP_MASK_MODE      0xF000000000000000ULL
 
 #define RIO_DDTE_MASK_PPN       0x00FFFFFFFFFFF000ULL
-
-#define RIO_DDTP_HI_BUSY        (1 << 27)
 
 /* Device directory mode values, within RIO_DDTP_MASK_MODE */
 #define RIO_DDTP_MODE_OFF       0
@@ -255,39 +254,51 @@ typedef struct RISCVIOMMUCommand {
 } RISCVIOMMUCommand;
 
 /* RISCVIOMMUCommand.request opcode and function mask */
-#define RIO_CMD_MASK_FUN_OP        0x00000000000003FFULL
+#define RIO_CMD_MASK_OP            0x000000000000007FULL
+#define RIO_CMD_MASK_FUNC          0x0000000000000380ULL
 
-/* opcode == IOTINVAL.* */
-#define RIO_CMD_IOTINVAL_VMA       0x001
-#define RIO_CMD_IOTINVAL_GVMA      0x081
-#define RIO_CMD_IOTINVAL_MSI       0x101
+#define RIO_CMD_IOTINVAL           0x001
+#define RIO_CMD_IOFENCE            0x002
+#define RIO_CMD_IODIR              0x003
+#define RIO_CMD_ATS                0x004
 
-#define RIO_IOTINVAL_PSCID_VALID   0x0000000000000400ULL
-#define RIO_IOTINVAL_ADDR_VALID    0x0000000000000800ULL
-#define RIO_IOTINVAL_GSCID_VALID   0x0000000000001000ULL
-#define RIO_IOTINVAL_ADDR_NAPOT    0x0000000000002000ULL
+/* opcode == IOTINVAL */
+
+#define RIO_IOTINVAL_FLAGS         0x00003F80
+
+#define RIO_IOTINVAL_GSTAGE        0x00000080
+#define RIO_IOTINVAL_MSI           0x00000100
+#define RIO_IOTINVAL_PSCID_VALID   0x00000400
+#define RIO_IOTINVAL_ADDR_VALID    0x00000800
+#define RIO_IOTINVAL_GSCID_VALID   0x00001000
+#define RIO_IOTINVAL_ADDR_NAPOT    0x00002000
+
 #define RIO_IOTINVAL_MASK_PSCID    0x0000000FFFFF0000ULL
 #define RIO_IOTINVAL_MASK_GSCID    0x00FFFF0000000000ULL
 
 /* opcode == IOFENCE.* */
-#define RIO_CMD_IOFENCE_C          0x002
 
-#define RIO_IOFENCE_PR             0x0000000000000400ULL
-#define RIO_IOFENCE_PW             0x0000000000000800ULL
-#define RIO_IOFENCE_AV             0x0000000000001000ULL
+#define RIO_IOFENCE_PR             0x00000400
+#define RIO_IOFENCE_PW             0x00000800
+#define RIO_IOFENCE_AV             0x00001000
+
 #define RIO_IOFENCE_MASK_DATA      0xFFFFFFFF00000000ULL
 
 /* opcode == IODIR.* */
-#define RIO_CMD_IODIR_INV_DDT      0x003
-#define RIO_CMD_IODIR_INV_PDT      0x083
+#define RIO_IODIR_PID_VALID        0x00000080
+#define RIO_IODIR_DID_VALID        0x00000400
 
-#define RIO_IODIR_DID_VALID        0x0000000000000400ULL
 #define RIO_IODIR_MASK_PID         0x0000000FFFFF0000ULL
 #define RIO_IODIR_MASK_DID         0xFFFFFF0000000000ULL
 
 /* opcode == ATS */
-#define RIO_CMD_ATS_INVAL          0x004
-#define RIO_CMD_ATS_PRGR           0x084
+#define RIO_ATSOP_PRGR             0x00000080
+#define RIO_ATSOP_DSV              0x00000400
+#define RIO_ATSOP_PV               0x00000800
+
+#define RIO_ATSOP_MASK_PID         0x0000000FFFFF0000ULL
+#define RIO_ATSOP_MASK_DSEG        0x0000FF0000000000ULL
+#define RIO_ATSOP_MASK_RID         0xFFFF000000000000ULL
 
 /* Fault Queue element */
 typedef struct RISCVIOMMUEvent {
