@@ -452,9 +452,28 @@ static void pci_edu_realize(PCIDevice *pdev, Error **errp)
     pos = PCI_CONFIG_SPACE_SIZE;
     if (edu->enable_pasid) {
         /* PCIe Spec 7.8.9 PASID Extended Capability Structure */
-        pcie_add_capability(pdev, 0x1b, 1, pos, 8);
+        pcie_add_capability(pdev, PCI_EXT_CAP_ID_PASID, 1, pos, 8);
         pci_set_long(pdev->config + pos + 4, 0x00001400);
         pci_set_long(pdev->wmask + pos + 4,  0xfff0ffff);
+        pos += 8;
+
+        /* ATS Capability */
+        pcie_ats_init(pdev, pos, true);
+        pos += PCI_EXT_CAP_ATS_SIZEOF;
+
+        /* PRI Capability */
+        pcie_add_capability(pdev, PCI_EXT_CAP_ID_PRI, 1, pos, 16);
+        /* PRI STOPPED */
+        pci_set_long(pdev->config + pos +  4, 0x01000000);
+        /* PRI ENABLE bit writable */
+        pci_set_long(pdev->wmask  + pos +  4, 0x00000001);
+        /* PRI Capacity Supported */
+        pci_set_long(pdev->config + pos +  8, 0x00000080);
+        /* PRI Allocations Allowed, 32 */
+        pci_set_long(pdev->config + pos + 12, 0x00000040);
+        pci_set_long(pdev->wmask  + pos + 12, 0x0000007f);
+
+        pos += 8;
     }
 
     if (msi_init(pdev, 0, 1, true, false, errp)) {
