@@ -55,6 +55,7 @@ struct EduState {
     bool stopping;
 
     bool enable_pasid;
+    uint32_t try;
 
     uint32_t addr4;
     uint32_t fact;
@@ -136,11 +137,51 @@ static dma_addr_t edu_clamp_addr(const EduState *edu, dma_addr_t addr)
     return res;
 }
 
+static bool __find_iommu_mr_cb(Int128 start, Int128 len, const MemoryRegion *mr,
+    hwaddr offset_in_region, void *opaque)
+{
+    IOMMUMemoryRegion **iommu_mr = opaque;
+    *iommu_mr = memory_region_get_iommu((MemoryRegion *)mr);
+    return *iommu_mr != NULL;
+}
+
+static int pci_dma_perm(PCIDevice *pdev, dma_addr_t iova, MemTxAttrs attrs)
+{
+    IOMMUMemoryRegion *iommu_mr = NULL;
+    IOMMUMemoryRegionClass *imrc;
+    int iommu_idx;
+    FlatView *fv;
+
+    RCU_READ_LOCK_GUARD();
+
+    fv = address_space_to_flatview(pci_get_address_space(pdev));
+
+    /* Find first IOMMUMemoryRegion */
+    flatview_for_each_range(fv, __find_iommu_mr_cb, &iommu_mr);
+
+    if (iommu_mr) {
+        imrc = memory_region_get_iommu_class_nocheck(iommu_mr);
+
+        /* IOMMU Index is mapping to memory attributes (PASID, etc) */
+        iommu_idx = imrc->attrs_to_index ?
+                    imrc->attrs_to_index(iommu_mr, attrs) : 0;
+
+        /* Translate request with IOMMU_NONE is an ATS request */
+        IOMMUTLBEntry iotlb = imrc->translate(iommu_mr, iova, IOMMU_NONE,
+                                              iommu_idx);
+
+        return iotlb.perm;
+    }
+
+    return IOMMU_NONE;
+}
+
 static void edu_dma_timer(void *opaque)
 {
     EduState *edu = opaque;
     bool raise_irq = false;
     MemTxAttrs attrs = MEMTXATTRS_UNSPECIFIED;
+    MemTxResult res;
 
     if (!(edu->dma.cmd & EDU_DMA_RUN)) {
         return;
@@ -155,18 +196,38 @@ static void edu_dma_timer(void *opaque)
 
     if (EDU_DMA_DIR(edu->dma.cmd) == EDU_DMA_FROM_PCI) {
         uint64_t dst = edu->dma.dst;
+        uint64_t src = edu_clamp_addr(edu, edu->dma.src);
         edu_check_range(dst, edu->dma.cnt, DMA_START, DMA_SIZE);
         dst -= DMA_START;
-        pci_dma_rw(&edu->pdev, edu_clamp_addr(edu, edu->dma.src),
-                edu->dma_buf + dst, edu->dma.cnt,
-                DMA_DIRECTION_TO_DEVICE, attrs);
+        if (edu->try && !(pci_dma_perm(&edu->pdev, src, attrs) & IOMMU_RO)) {
+            edu->try--;
+            /* TODO: PRGR, wait for MAP notification */
+            timer_mod(&edu->dma_timer,
+                      qemu_clock_get_ms(QEMU_CLOCK_VIRTUAL) + 100);
+            return;
+        }
+        res = pci_dma_rw(&edu->pdev, src, edu->dma_buf + dst, edu->dma.cnt,
+            DMA_DIRECTION_TO_DEVICE, attrs);
+        if (res != MEMTX_OK) {
+            hw_error("EDU: DMA transfer TO 0x%"PRIx64" failed.\n", dst);
+        }
     } else {
         uint64_t src = edu->dma.src;
+        uint64_t dst = edu_clamp_addr(edu, edu->dma.dst);
         edu_check_range(src, edu->dma.cnt, DMA_START, DMA_SIZE);
         src -= DMA_START;
-        pci_dma_rw(&edu->pdev, edu_clamp_addr(edu, edu->dma.dst),
-                edu->dma_buf + src, edu->dma.cnt,
-                DMA_DIRECTION_FROM_DEVICE, attrs);
+        if (edu->try && !(pci_dma_perm(&edu->pdev, dst, attrs) & IOMMU_WO)) {
+            edu->try--;
+            /* TODO: PRGR, wait for MAP notification */
+            timer_mod(&edu->dma_timer,
+                      qemu_clock_get_ms(QEMU_CLOCK_VIRTUAL) + 100);
+            return;
+        }
+        res = pci_dma_rw(&edu->pdev, dst, edu->dma_buf + src, edu->dma.cnt,
+            DMA_DIRECTION_FROM_DEVICE, attrs);
+        if (res != MEMTX_OK) {
+            hw_error("EDU: DMA transfer FROM 0x%"PRIx64" failed.\n", src);
+        }
     }
 
     edu->dma.cmd &= ~EDU_DMA_RUN;
@@ -193,6 +254,7 @@ static void dma_rw(EduState *edu, bool write, dma_addr_t *val, dma_addr_t *dma,
     }
 
     if (timer) {
+        edu->try = 1;
         timer_mod(&edu->dma_timer, qemu_clock_get_ms(QEMU_CLOCK_VIRTUAL) + 100);
     }
 }
