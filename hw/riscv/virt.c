@@ -32,6 +32,7 @@
 #include "hw/core/sysbus-fdt.h"
 #include "target/riscv/pmu.h"
 #include "hw/riscv/riscv_hart.h"
+#include "hw/riscv/iommu.h"
 #include "hw/riscv/virt.h"
 #include "hw/riscv/boot.h"
 #include "hw/riscv/numa.h"
@@ -1018,6 +1019,32 @@ static void create_fdt_fw_cfg(RISCVVirtState *s, const MemMapEntry *memmap)
     g_free(nodename);
 }
 
+static void create_fdt_iommu(RISCVVirtState *s, uint16_t bdf)
+{
+    const char comp[] = "riscv,pci-iommu";
+    MachineState *mc = MACHINE(s);
+    uint32_t iommu_phandle;
+    char *iommu_node;
+    char *pci_node;
+
+    pci_node = g_strdup_printf("/soc/pci@%lx",
+        (long) virt_memmap[VIRT_PCIE_ECAM].base);
+    iommu_node = g_strdup_printf("%s/iommu@%x", pci_node, bdf);
+
+    iommu_phandle = qemu_fdt_alloc_phandle(mc->fdt);
+    qemu_fdt_add_subnode(mc->fdt, iommu_node);
+    qemu_fdt_setprop(mc->fdt, iommu_node, "compatible", comp, sizeof(comp));
+    qemu_fdt_setprop_cell(mc->fdt, iommu_node, "#iommu-cells", 1);
+    qemu_fdt_setprop_cell(mc->fdt, iommu_node, "phandle", iommu_phandle);
+    qemu_fdt_setprop_cells(mc->fdt, iommu_node, "reg",
+                           bdf << 8, 0, 0, 0, 0);
+    qemu_fdt_setprop_cells(mc->fdt, pci_node, "iommu-map",
+                           0, iommu_phandle, 0, bdf,
+                           bdf + 1, iommu_phandle, bdf + 1, 0xffff - bdf);
+    g_free(iommu_node);
+    g_free(pci_node);
+}
+
 static void create_fdt(RISCVVirtState *s, const MemMapEntry *memmap)
 {
     MachineState *ms = MACHINE(s);
@@ -1636,6 +1663,9 @@ static HotplugHandler *virt_machine_get_hotplug_handler(MachineState *machine,
     if (device_is_dynamic_sysbus(mc, dev)) {
         return HOTPLUG_HANDLER(machine);
     }
+    if (object_dynamic_cast(OBJECT(dev), TYPE_RISCV_IOMMU_PCI)) {
+        return HOTPLUG_HANDLER(machine);
+    }
     return NULL;
 }
 
@@ -1651,6 +1681,10 @@ static void virt_machine_device_plug_cb(HotplugHandler *hotplug_dev,
             platform_bus_link_device(PLATFORM_BUS_DEVICE(s->platform_bus_dev),
                                      SYS_BUS_DEVICE(dev));
         }
+    }
+    if (object_dynamic_cast(OBJECT(dev), TYPE_RISCV_IOMMU_PCI)) {
+        PCIDevice *pdev = PCI_DEVICE(dev);
+        create_fdt_iommu(s, pci_get_bdf(pdev));
     }
 }
 
