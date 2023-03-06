@@ -32,6 +32,7 @@
 #include "hw/core/sysbus-fdt.h"
 #include "target/riscv/pmu.h"
 #include "hw/riscv/riscv_hart.h"
+#include "hw/riscv/iommu.h"
 #include "hw/riscv/virt.h"
 #include "hw/riscv/boot.h"
 #include "hw/riscv/numa.h"
@@ -80,7 +81,8 @@ static const MemMapEntry virt_memmap[] = {
     [VIRT_APLIC_M] =      {  0xc000000, APLIC_SIZE(VIRT_CPUS_MAX) },
     [VIRT_APLIC_S] =      {  0xd000000, APLIC_SIZE(VIRT_CPUS_MAX) },
     [VIRT_UART0] =        { 0x10000000,         0x100 },
-    [VIRT_VIRTIO] =       { 0x10001000,        0x1000 },
+    [VIRT_VIRTIO] =       { 0x10001000,        0x1000 }, /* VIRTIO_COUNT == 8 */
+    [VIRT_IOMMU] =        { 0x10010000,        0x1000 },
     [VIRT_FW_CFG] =       { 0x10100000,          0x18 },
     [VIRT_FLASH] =        { 0x20000000,     0x4000000 },
     [VIRT_IMSIC_M] =      { 0x24000000, VIRT_IMSIC_MAX_SIZE },
@@ -1006,6 +1008,49 @@ static void create_fdt_virtio_iommu(RISCVVirtState *s, uint16_t bdf)
                            bdf + 1, iommu_phandle, bdf + 1, 0xffff - bdf);
 }
 
+static void create_fdt_iommu(RISCVVirtState *s, const MemMapEntry *memmap,
+    uint32_t irq_mmio_phandle)
+{
+    MachineState *ms = MACHINE(s);
+    uint32_t iommu_phandle;
+    char *iommu_node;
+    char *pci_node;
+
+    pci_node = g_strdup_printf("/soc/pci@%" PRIx64, memmap[VIRT_PCIE_ECAM].base);
+    iommu_node = g_strdup_printf("/soc/iommu@%" PRIx64, memmap[VIRT_IOMMU].base);
+
+    iommu_phandle = qemu_fdt_alloc_phandle(ms->fdt);
+    qemu_fdt_add_subnode(ms->fdt, iommu_node);
+    qemu_fdt_setprop_string(ms->fdt, iommu_node, "compatible", "riscv,iommu");
+    qemu_fdt_setprop_cell(ms->fdt, iommu_node, "#iommu-cells", 1);
+    qemu_fdt_setprop_cell(ms->fdt, iommu_node, "phandle", iommu_phandle);
+    qemu_fdt_setprop_cells(ms->fdt, iommu_node, "reg",
+        0x0, memmap[VIRT_IOMMU].base, 0x0, memmap[VIRT_IOMMU].size);
+    qemu_fdt_setprop_cell(ms->fdt, iommu_node, "interrupt-parent", irq_mmio_phandle);
+    if (IOMMU_IRQ_COUNT == 4 && s->aia_type == VIRT_AIA_TYPE_NONE) {
+        qemu_fdt_setprop_cells(ms->fdt, iommu_node, "interrupts",
+            IOMMU_IRQ, IOMMU_IRQ + 1, IOMMU_IRQ + 2, IOMMU_IRQ + 3);
+    } else if (IOMMU_IRQ_COUNT == 4) {
+        qemu_fdt_setprop_cells(ms->fdt, iommu_node, "interrupts",
+            IOMMU_IRQ, 1, IOMMU_IRQ + 1, 1, IOMMU_IRQ + 2, 1, IOMMU_IRQ + 3, 1);
+    } else if (s->aia_type == VIRT_AIA_TYPE_NONE) {
+        qemu_fdt_setprop_cells(ms->fdt, iommu_node, "interrupts",
+            IOMMU_IRQ);
+    } else {
+        qemu_fdt_setprop_cells(ms->fdt, iommu_node, "interrupts",
+            IOMMU_IRQ, 1);
+    }
+    qemu_fdt_setprop_cells(ms->fdt, pci_node, "iommu-map",
+        0x0, iommu_phandle, 0x0, 0xffff);
+    g_free(iommu_node);
+    g_free(pci_node);
+}
+
+static bool virt_is_iommu_enabled(RISCVVirtState *s)
+{
+    return s->iommu != ON_OFF_AUTO_OFF;
+}
+
 static void finalize_fdt(RISCVVirtState *s)
 {
     uint32_t phandle = 1, irq_mmio_phandle = 1, msi_pcie_phandle = 1;
@@ -1020,6 +1065,10 @@ static void finalize_fdt(RISCVVirtState *s)
     create_fdt_pcie(s, virt_memmap, irq_pcie_phandle, msi_pcie_phandle);
 
     create_fdt_reset(s, virt_memmap, &phandle);
+
+    if (virt_is_iommu_enabled(s)) {
+        create_fdt_iommu(s, virt_memmap, irq_mmio_phandle);
+    }
 
     create_fdt_uart(s, virt_memmap, irq_mmio_phandle);
 
@@ -1236,6 +1285,31 @@ static DeviceState *virt_create_aia(RISCVVirtAIAType aia_type, int aia_guests,
                                  msimode, false, aplic_m);
 
     return kvm_enabled() ? aplic_s : aplic_m;
+}
+
+static DeviceState *virt_create_iommu(RISCVVirtState *s, DeviceState *irqchip)
+{
+    DeviceState *iommu;
+    int i;
+
+    iommu = qdev_new(TYPE_RISCV_IOMMU_SYS);
+
+    if (s->aia_type != VIRT_AIA_TYPE_APLIC_IMSIC) {
+        /* Disable MSI_FLAT [22], MSI_MRIF [23] if IMSIC is not enabled. */
+        qdev_prop_set_uint64(iommu, "capabilities", ~(BIT_ULL(22) | BIT_ULL(23)));
+    }
+
+    /* Fixed base register address */
+    qdev_prop_set_uint64(iommu, "addr", virt_memmap[VIRT_IOMMU].base);
+
+    sysbus_realize_and_unref(SYS_BUS_DEVICE(iommu), &error_fatal);
+
+    for (i = 0; i < 4; i++) {
+        sysbus_connect_irq(SYS_BUS_DEVICE(iommu), i,
+            qdev_get_gpio_in(irqchip, IOMMU_IRQ + i));
+    }
+
+    return iommu;
 }
 
 static void create_platform_bus(RISCVVirtState *s, DeviceState *irqchip)
@@ -1574,6 +1648,10 @@ static void virt_machine_init(MachineState *machine)
 
     create_platform_bus(s, mmio_irqchip);
 
+    if (virt_is_iommu_enabled(s)) {
+        virt_create_iommu(s, mmio_irqchip);
+    }
+
     serial_mm_init(system_memory, memmap[VIRT_UART0].base,
         0, qdev_get_gpio_in(mmio_irqchip, UART0_IRQ), 399193,
         serial_hd(0), DEVICE_LITTLE_ENDIAN);
@@ -1612,6 +1690,7 @@ static void virt_machine_instance_init(Object *obj)
     s->oem_id = g_strndup(ACPI_BUILD_APPNAME6, 6);
     s->oem_table_id = g_strndup(ACPI_BUILD_APPNAME8, 8);
     s->acpi = ON_OFF_AUTO_AUTO;
+    s->iommu = ON_OFF_AUTO_AUTO;
 }
 
 static char *virt_get_aia_guests(Object *obj, Error **errp)
@@ -1684,6 +1763,23 @@ static void virt_set_aclint(Object *obj, bool value, Error **errp)
     RISCVVirtState *s = RISCV_VIRT_MACHINE(obj);
 
     s->have_aclint = value;
+}
+
+static void virt_get_iommu(Object *obj, Visitor *v, const char *name,
+                           void *opaque, Error **errp)
+{
+    RISCVVirtState *s = RISCV_VIRT_MACHINE(obj);
+    OnOffAuto iommu = s->iommu;
+
+    visit_type_OnOffAuto(v, name, &iommu, errp);
+}
+
+static void virt_set_iommu(Object *obj, Visitor *v, const char *name,
+                           void *opaque, Error **errp)
+{
+    RISCVVirtState *s = RISCV_VIRT_MACHINE(obj);
+
+    visit_type_OnOffAuto(v, name, &s->iommu, errp);
 }
 
 bool virt_is_acpi_enabled(RISCVVirtState *s)
@@ -1793,6 +1889,13 @@ static void virt_machine_class_init(ObjectClass *oc, void *data)
                               NULL, NULL);
     object_class_property_set_description(oc, "acpi",
                                           "Enable ACPI");
+
+    machine_class_allow_dynamic_sysbus_dev(mc, TYPE_RISCV_IOMMU_SYS);
+    object_class_property_add(oc, "iommu", "OnOffAuto",
+                              virt_get_iommu, virt_set_iommu,
+                              NULL, NULL);
+    object_class_property_set_description(oc, "iommu",
+        "Set on/off to enable/disable emulating RISC-V IOMMU platform device");
 }
 
 static const TypeInfo virt_machine_typeinfo = {
