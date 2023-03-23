@@ -2115,8 +2115,9 @@ static void riscv_iommu_realize(DeviceState *dev, Error **errp)
     /* Report QEMU target physical address space limits */
     s->cap = set_field(s->cap, RIO_CAP_PAS, TARGET_PHYS_ADDR_SPACE_BITS);
 
-    /* Process directory context support, disabled. */
-    s->pasid_bits = 0;
+    /* TODO: method to report supported PASID bits */
+    s->pasid_bits = 8; /* restricted to size of MemTxAttrs.pasid */
+    s->cap |= RIO_CAP_PD8;
 
     /* Out-of-reset translation mode: OFF (DMA disabled) BARE (passthrough) */
     s->ddtp = set_field(0, RIO_DDTP_MODE, s->enable_off ?
@@ -2365,7 +2366,7 @@ static AddressSpace *riscv_iommu_find_as(PCIBus *bus, void *opaque, int devfn)
 }
 
 void riscv_iommu_pci_setup_iommu(RISCVIOMMUState *iommu, PCIBus *bus,
-    Error **errp)
+        Error **errp)
 {
     if (bus->iommu_fn == riscv_iommu_find_as) {
         /* Allow multiple IOMMUs on the same PCIe bus, link known devices */
@@ -2382,12 +2383,13 @@ void riscv_iommu_pci_setup_iommu(RISCVIOMMUState *iommu, PCIBus *bus,
 static int riscv_iommu_memory_region_index(IOMMUMemoryRegion *iommu_mr,
     MemTxAttrs attrs)
 {
-    return 0;
+    return attrs.unspecified ? 0 : (int)attrs.pasid;
 }
 
 static int riscv_iommu_memory_region_index_len(IOMMUMemoryRegion *iommu_mr)
 {
-    return 1;
+    RISCVIOMMUSpace *as = container_of(iommu_mr, RISCVIOMMUSpace, iova_mr);
+    return 1 << as->iommu->pasid_bits;
 }
 
 static void riscv_iommu_memory_region_init(ObjectClass *klass, void *data)
