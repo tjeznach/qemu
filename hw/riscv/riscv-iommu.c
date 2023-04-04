@@ -388,6 +388,7 @@ static int riscv_iommu_spa_fetch(RISCVIOMMUState *s, RISCVIOMMUContext *ctx,
                                  (sc[pass].levels - 1 - sc[pass].step);
         const unsigned idx = (addr >> va_skip) & ((1 << va_bits) - 1);
         const dma_addr_t pte_addr = base + idx * sc[pass].ptesize;
+        const bool ade = ctx->tc & (pass ? RIO_DCTC_GADE : RIO_DCTC_SADE);
 
         /* Address range check before first level lookup */
         if (!sc[pass].step) {
@@ -433,6 +434,10 @@ static int riscv_iommu_spa_fetch(RISCVIOMMUState *s, RISCVIOMMUContext *ctx,
             break;                /* Read access check failed */
         } else if ((iotlb->perm & IOMMU_WO) && !(pte & PTE_W)) {
             break;                /* Write access check failed */
+        } else if ((iotlb->perm & IOMMU_RO) && !ade && !(pte & PTE_A)) {
+            break;                /* Access bit not set */
+        } else if ((iotlb->perm & IOMMU_WO) && !ade && !(pte & PTE_D)) {
+            break;                /* Dirty bit not set */
         } else {
             /* Leaf PTE, translation completed. */
             sc[pass].step = sc[pass].levels;
