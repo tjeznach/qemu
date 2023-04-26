@@ -90,7 +90,7 @@ static void riscv_iommu_fault(RISCVIOMMUState *s, struct riscv_iommu_event *ev)
     uint32_t head = riscv_iommu_reg_get32(s, RIO_REG_FQH) & s->fq_mask;
     uint32_t tail = riscv_iommu_reg_get32(s, RIO_REG_FQT) & s->fq_mask;
     uint32_t next = (tail + 1) & s->fq_mask;
-    uint32_t devid = ev->reason & ((1U << 20) - 1);
+    uint32_t devid = get_field(ev->reason, RIO_EVENT_DID);
 
     trace_riscv_iommu_flt(s->parent_obj.id, PCI_BUS_NUM(devid), PCI_SLOT(devid),
                           PCI_FUNC(devid), ev->reason, ev->iova);
@@ -893,13 +893,12 @@ static RISCVIOMMUContext *riscv_iommu_ctx(RISCVIOMMUState *s,
     *ref = NULL;
 
     if (!(ctx->tc & RIO_DCTC_DTF)) {
-        struct riscv_iommu_event ev = {
-            .reason = set_field(set_field(ctx->devid,
-                RIO_EVENT_CAUSE, fault), RIO_EVENT_TTYP, RIO_TTYP_URD),
-            .iova   = 0,
-            .phys   = 0,
-            ._reserved = 0,
-        };
+        struct riscv_iommu_event ev = { 0 };
+        ev.reason = set_field(ev.reason, RIO_EVENT_CAUSE, fault);
+        ev.reason = set_field(ev.reason, RIO_EVENT_TTYP, RIO_TTYP_URD);
+        ev.reason = set_field(ev.reason, RIO_EVENT_DID, devid);
+        ev.reason = set_field(ev.reason, RIO_EVENT_PID, pasid);
+        ev.reason = set_field(ev.reason, RIO_EVENT_PV, !!pasid);
         riscv_iommu_fault(s, &ev);
     }
 
@@ -1162,10 +1161,11 @@ done:
         struct riscv_iommu_event ev;
         const unsigned ttype = (iotlb->perm & IOMMU_RW) ? RIO_TTYP_UWR :
                 ((iotlb->perm & IOMMU_RO) ? RIO_TTYP_URD : RIO_TTYP_ATS);
-        ev.reason = set_field(ctx->devid, RIO_EVENT_CAUSE, fault);
+        ev.reason = set_field(0, RIO_EVENT_CAUSE, fault);
         ev.reason = set_field(ev.reason, RIO_EVENT_TTYP, ttype);
         ev.reason = set_field(ev.reason, RIO_EVENT_PV, enable_pasid);
         ev.reason = set_field(ev.reason, RIO_EVENT_PID, ctx->pasid);
+        ev.reason = set_field(ev.reason, RIO_EVENT_DID, ctx->devid);
         ev.iova   = iotlb->iova;
         ev.phys   = iotlb->translated_addr;
         ev._reserved = 0;
