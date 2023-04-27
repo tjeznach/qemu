@@ -1062,7 +1062,7 @@ static void riscv_iommu_iot_inval(RISCVIOMMUState *s, GHFunc func,
 }
 
 static int riscv_iommu_translate(RISCVIOMMUState *s, RISCVIOMMUContext *ctx,
-    IOMMUTLBEntry *iotlb)
+    IOMMUTLBEntry *iotlb, bool enable_cache)
 {
     RISCVIOMMUEntry *iot;
     IOMMUAccessFlags perm;
@@ -1122,7 +1122,7 @@ static int riscv_iommu_translate(RISCVIOMMUState *s, RISCVIOMMUContext *ctx,
     /* Translate using device directory / page table information. */
     fault = riscv_iommu_spa_fetch(s, ctx, iotlb, false);
 
-    if (!fault && iotlb->translated_addr != iotlb->iova) {
+    if (!fault && iotlb->translated_addr != iotlb->iova && enable_cache) {
         iot = g_new0(RISCVIOMMUEntry, 1);
         iot->iova = PPN_DOWN(iotlb->iova);
         iot->phys = PPN_DOWN(iotlb->translated_addr);
@@ -1519,7 +1519,7 @@ static void riscv_iommu_process_dbg(RISCVIOMMUState *s)
             .addr_mask = ~0,
             .target_as = NULL,
         };
-        int fault = riscv_iommu_translate(s, ctx, &iotlb);
+        int fault = riscv_iommu_translate(s, ctx, &iotlb, false);
         if (fault) {
             iova = RIO_TRRSP_FAULT | (((uint64_t) fault) << 10);
         } else {
@@ -2294,7 +2294,7 @@ static IOMMUTLBEntry riscv_iommu_memory_region_translate(
         /* Translation disabled or invalid. */
         iotlb.addr_mask = 0;
         iotlb.perm = IOMMU_NONE;
-    } else if (riscv_iommu_translate(as->iommu, ctx, &iotlb)) {
+    } else if (riscv_iommu_translate(as->iommu, ctx, &iotlb, true)) {
         /* Translation disabled or fault reported. */
         iotlb.addr_mask = 0;
         iotlb.perm = IOMMU_NONE;
