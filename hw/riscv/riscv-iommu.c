@@ -789,10 +789,6 @@ static int riscv_iommu_ctx_fetch(RISCVIOMMUState *s, RISCVIOMMUContext *ctx)
     ctx->ta = le64_to_cpu(dc.ta);
     ctx->satp = le64_to_cpu(dc.fsc);
 
-    if (!(ctx->ta & RIO_PCTA_V)) {
-        return RIO_CAUSE_PDT_INVALID;
-    }
-
     return 0;
 }
 
@@ -1095,7 +1091,7 @@ static int riscv_iommu_translate(RISCVIOMMUState *s, RISCVIOMMUContext *ctx,
      * enable automatic page-request generation for ATS queries.
      */
     enable_pri = (iotlb->perm == IOMMU_NONE) && (ctx->tc & BIT_ULL(32));
-    enable_pasid = (ctx->tc & RIO_DCTC_PDTV) && (ctx->ta & RIO_PCTA_V);
+    enable_pasid = (ctx->tc & RIO_DCTC_PDTV);
 
     /* Check for ATS request. */
     if (iotlb->perm == IOMMU_NONE) {
@@ -1126,8 +1122,7 @@ static int riscv_iommu_translate(RISCVIOMMUState *s, RISCVIOMMUContext *ctx,
     /* Translate using device directory / page table information. */
     fault = riscv_iommu_spa_fetch(s, ctx, iotlb, false);
 
-    if (!fault && (ctx->ta & RIO_PCTA_V) &&
-        (iotlb->translated_addr != iotlb->iova)) {
+    if (!fault && iotlb->translated_addr != iotlb->iova) {
         iot = g_new0(RISCVIOMMUEntry, 1);
         iot->iova = PPN_DOWN(iotlb->iova);
         iot->phys = PPN_DOWN(iotlb->translated_addr);
