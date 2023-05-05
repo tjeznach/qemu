@@ -75,6 +75,9 @@ struct RISCVIOMMUEntry {
     uint64_t __rfu:2;
 };
 
+/* IOMMU index for transactions without PASID specified. */
+#define RISCV_IOMMU_NOPASID 0
+
 static void riscv_iommu_notify(RISCVIOMMUState *s, int vec)
 {
     const uint32_t ipsr = riscv_iommu_reg_mod32(s, RIO_REG_IPSR, (1 << vec), 0);
@@ -742,13 +745,24 @@ static int riscv_iommu_ctx_fetch(RISCVIOMMUState *s, RISCVIOMMUContext *ctx)
     }
 
     if (!(ctx->tc & RIO_DCTC_PDTV)) {
-        if (ctx->pasid) {
+        if (ctx->pasid != RISCV_IOMMU_NOPASID) {
             return RIO_CAUSE_REQ_INVALID; /* PASID is disabled */
         }
         if (mode > RIO_ATP_MODE_SV57) {
             return RIO_CAUSE_DDT_INVALID; /* Invalid SATP.MODE */
         }
         return 0;
+    }
+
+    if (ctx->pasid == RISCV_IOMMU_NOPASID) {
+        if (!(ctx->tc & RIO_DCTC_DPE)) {
+            /* No default PASID enabled, set BARE mode */
+            ctx->satp = 0ULL;
+            return 0;
+        } else {
+            /* Use default PASID #0 */
+            ctx->pasid = 0;
+        }
     }
 
     /* FSC.TC.PDTV enabled */
@@ -2383,7 +2397,7 @@ void riscv_iommu_pci_setup_iommu(RISCVIOMMUState *iommu, PCIBus *bus,
 static int riscv_iommu_memory_region_index(IOMMUMemoryRegion *iommu_mr,
     MemTxAttrs attrs)
 {
-    return attrs.unspecified ? 0 : (int)attrs.pasid;
+    return attrs.unspecified ? RISCV_IOMMU_NOPASID : (int)attrs.pasid;
 }
 
 static int riscv_iommu_memory_region_index_len(IOMMUMemoryRegion *iommu_mr)
