@@ -33,7 +33,7 @@ struct RISCVIOMMUState {
     uint32_t pasid_bits;  /* process identifier width */
     uint32_t bus;         /* PCI bus mapping for non-root endpoints */
 
-    uint64_t cap;         /* IOMMU supported capabitilites */
+    uint64_t cap;         /* IOMMU supported capabilities */
     uint64_t fctl;        /* IOMMU enabled features */
 
     bool enable_off;      /* Enable out-of-reset OFF mode (DMA disabled) */
@@ -49,9 +49,9 @@ struct RISCVIOMMUState {
     dma_addr_t fq_addr;   /* Fault/event queue base physical address */
     dma_addr_t pq_addr;   /* Page request queue base physical address */
 
-    uint32_t cq_mask;     /* Command queue index bitmask */
-    uint32_t fq_mask;     /* Fault/event queue index bitmask */
-    uint32_t pq_mask;     /* Page request queue index bitmask */
+    uint32_t cq_mask;     /* Command queue index bit mask */
+    uint32_t fq_mask;     /* Fault/event queue index bit mask */
+    uint32_t pq_mask;     /* Page request queue index bit mask */
 
     /* interrupt notifier */
     void (*notify)(RISCVIOMMUState *iommu, unsigned vector);
@@ -59,7 +59,7 @@ struct RISCVIOMMUState {
     /* IOMMU State Machine */
     QemuThread core_proc; /* Background processing thread */
     QemuMutex core_lock;  /* Global IOMMU lock, used for cache/regs updates */
-    QemuCond core_cond;   /* Background processing wakeup signal */
+    QemuCond core_cond;   /* Background processing wake up signal */
     unsigned core_exec;   /* Processing thread execution actions */
 
     /* IOMMU target address space */

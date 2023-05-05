@@ -100,6 +100,11 @@
 #define RIO_FCTL_WIS            BIT_ULL(1)
 #define RIO_FCTL_GXL            BIT_ULL(2)
 
+/* Interrupt generation support */
+#define RIO_IGS_MSI 0
+#define RIO_IGS_WSI 1
+#define RIO_IGS_ANY 2
+
 /* Device directory table pointer */
 #define RIO_DDTP_BUSY           BIT_ULL(4)
 #define RIO_DDTP_MODE           GENMASK_ULL(3, 0)
