@@ -752,11 +752,11 @@ static int riscv_iommu_ctx_fetch(RISCVIOMMUState *s, RISCVIOMMUContext *ctx)
     }
 
     /* FSC.TC.PDTV enabled */
-    if (mode > RIO_PDTP_MODE_PD8) {
+    if (mode > RIO_PDTP_MODE_PD20) {
         return RIO_CAUSE_PDT_UNSUPPORTED; /* Invalid PDTP.MODE */
     }
 
-    for (depth = RIO_PDTP_MODE_PD8 - mode; depth-- > 0; ) {
+    for (depth = mode - RIO_PDTP_MODE_PD8; depth-- > 0; ) {
         riscv_iommu_hpm_incr_ctr(s, ctx, RIO_HPMEVENT_PD_WALK);
 
         /*
