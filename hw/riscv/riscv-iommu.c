@@ -575,7 +575,7 @@ static MemTxResult riscv_iommu_msi_write(RISCVIOMMUState *s,
 
     /*
      * Report an error for interrupt identities exceeding the maximum allowed
-     * for an IMSIC interrupt file (2047) or destination addres is not 32-bit
+     * for an IMSIC interrupt file (2047) or destination address is not 32-bit
      * aligned. See IOMMU Specification, Chapter 2.3. MSI page tables.
      */
     if ((data > 2047) || (iova & 3)) {
@@ -1010,7 +1010,7 @@ static void __iot_inval_gscid_gpa(gpointer key, gpointer value, gpointer data)
     RISCVIOMMUEntry *iot = (RISCVIOMMUEntry *) value;
     RISCVIOMMUEntry *arg = (RISCVIOMMUEntry *) data;
     if (iot->gscid == arg->gscid) {
-        /* simpolified cache, no GPA matching */
+        /* simplified cache, no GPA matching */
         iot->perm = 0;
     }
 }
@@ -1117,8 +1117,7 @@ static int riscv_iommu_translate(RISCVIOMMUState *s, RISCVIOMMUContext *ctx,
             goto done;
         }
         trace_riscv_iommu_ats(s->parent_obj.id, PCI_BUS_NUM(ctx->devid),
-                              PCI_SLOT(ctx->devid), PCI_FUNC(ctx->devid),
-                              iotlb->iova);
+                PCI_SLOT(ctx->devid), PCI_FUNC(ctx->devid), iotlb->iova);
     }
 
     iot = riscv_iommu_iot_lookup(ctx, iot_cache, iotlb->iova);
@@ -1383,7 +1382,7 @@ static void riscv_iommu_process_cq_tail(RISCVIOMMUState *s)
 
         case RIO_CMD_IODIR_PDT:
             if (!(cmd.request & RIO_IODIR_DV)) {
-                /* illegal command qeguments IODIR_PDT & DV == 0 */
+                /* illegal command arguments IODIR_PDT & DV == 0 */
                 goto cmd_ill;
             } else {
                 func = __ctx_inval_devid_pasid;
@@ -1547,7 +1546,7 @@ static void riscv_iommu_process_dbg(RISCVIOMMUState *s)
     riscv_iommu_ctx_put(s, ref);
 }
 
-/* Core IOMMU execution activations */
+/* Core IOMMU execution activation */
 enum {
     RIO_EXEC_DDTP,
     RIO_EXEC_CQCSR,
@@ -1912,7 +1911,7 @@ static MemTxResult riscv_iommu_mmio_write(void *opaque, hwaddr addr,
         riscv_iommu_process_hpm_writes(s, regb, cy_inh);
     }
 
-    /* Wakeup core processing thread. */
+    /* Wake up core processing thread. */
     if (exec) {
         qemu_mutex_lock(&s->core_lock);
         s->core_exec |= exec;
