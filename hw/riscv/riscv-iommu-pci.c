@@ -78,9 +78,9 @@ static void riscv_iommu_pci_realize(PCIDevice *dev, Error **errp)
     pci_register_bar(dev, 0, PCI_BASE_ADDRESS_SPACE_MEMORY |
                      PCI_BASE_ADDRESS_MEM_TYPE_64, &s->bar0);
 
-    int ret = msix_init(dev, RIO_INT_COUNT,
-                        &s->bar0, 0, RIO_REG_MSI_CONFIG,
-                        &s->bar0, 0, RIO_REG_MSI_CONFIG + 256, 0, &err);
+    int ret = msix_init(dev, RISCV_IOMMU_INTR_COUNT,
+                        &s->bar0, 0, RISCV_IOMMU_REG_MSI_CONFIG,
+                        &s->bar0, 0, RISCV_IOMMU_REG_MSI_CONFIG + 256, 0, &err);
 
     if (ret == -ENOTSUP) {
         /*
@@ -93,10 +93,10 @@ static void riscv_iommu_pci_realize(PCIDevice *dev, Error **errp)
         return;
     } else {
         /* mark all allocated MSIx vectors as used. */
-        msix_vector_use(dev, RIO_INT_CQ);
-        msix_vector_use(dev, RIO_INT_FQ);
-        msix_vector_use(dev, RIO_INT_PQ);
-        msix_vector_use(dev, RIO_INT_PM);
+        msix_vector_use(dev, RISCV_IOMMU_INTR_CQ);
+        msix_vector_use(dev, RISCV_IOMMU_INTR_FQ);
+        msix_vector_use(dev, RISCV_IOMMU_INTR_PM);
+        msix_vector_use(dev, RISCV_IOMMU_INTR_PQ);
         iommu->notify = riscv_iommu_pci_notify;
     }
 
