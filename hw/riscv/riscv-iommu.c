@@ -304,8 +304,8 @@ static int riscv_iommu_spa_fetch(RISCVIOMMUState *s, RISCVIOMMUContext *ctx,
         G_STAGE = 1,
     } pass;
 
-    satp = get_field(ctx->satp, RISCV_IOMMU_DC_FSC_MODE);
-    gatp = get_field(ctx->gatp, RISCV_IOMMU_DC_IOHGATP_MODE);
+    satp = get_field(ctx->satp, RISCV_IOMMU_ATP_MODE_FIELD);
+    gatp = get_field(ctx->gatp, RISCV_IOMMU_ATP_MODE_FIELD);
 
     en_s = satp != RISCV_IOMMU_DC_FSC_MODE_BARE && !gpa;
     en_g = gatp != RISCV_IOMMU_DC_IOHGATP_MODE_BARE;
@@ -332,8 +332,7 @@ static int riscv_iommu_spa_fetch(RISCVIOMMUState *s, RISCVIOMMUContext *ctx,
                 sc[pass].ptesize   = 0;
                 break;
             case RISCV_IOMMU_DC_IOHGATP_MODE_SV32X4:
-                if (!(s->cap & (pass ? RISCV_IOMMU_CAP_G_SV32 :
-                    RISCV_IOMMU_CAP_S_SV32))) {
+                if (!(s->cap & (pass ? RISCV_IOMMU_CAP_SV32X4 : RISCV_IOMMU_CAP_SV32))) {
                     return RISCV_IOMMU_FQ_CAUSE_DDT_MISCONFIGURED;
                 }
                 sc[pass].levels    = 2;
@@ -352,8 +351,7 @@ static int riscv_iommu_spa_fetch(RISCVIOMMUState *s, RISCVIOMMUContext *ctx,
                 sc[pass].ptesize   = 0;
                 break;
             case RISCV_IOMMU_DC_IOHGATP_MODE_SV39X4:
-                if (!(s->cap & (pass ? RISCV_IOMMU_CAP_G_SV39 :
-                    RISCV_IOMMU_CAP_S_SV39))) {
+                if (!(s->cap & (pass ? RISCV_IOMMU_CAP_SV39X4 : RISCV_IOMMU_CAP_SV39))) {
                     return RISCV_IOMMU_FQ_CAUSE_DDT_MISCONFIGURED;
                 }
                 sc[pass].levels    = 3;
@@ -361,8 +359,7 @@ static int riscv_iommu_spa_fetch(RISCVIOMMUState *s, RISCVIOMMUContext *ctx,
                 sc[pass].ptesize   = 8;
                 break;
             case RISCV_IOMMU_DC_IOHGATP_MODE_SV48X4:
-                if (!(s->cap & (pass ? RISCV_IOMMU_CAP_G_SV48 :
-                    RISCV_IOMMU_CAP_S_SV48))) {
+                if (!(s->cap & (pass ? RISCV_IOMMU_CAP_SV48X4 : RISCV_IOMMU_CAP_SV48))) {
                     return RISCV_IOMMU_FQ_CAUSE_DDT_MISCONFIGURED;
                 }
                 sc[pass].levels    = 4;
@@ -370,8 +367,7 @@ static int riscv_iommu_spa_fetch(RISCVIOMMUState *s, RISCVIOMMUContext *ctx,
                 sc[pass].ptesize   = 8;
                 break;
             case RISCV_IOMMU_DC_IOHGATP_MODE_SV57X4:
-                if (!(s->cap & (pass ? RISCV_IOMMU_CAP_G_SV57 :
-                    RISCV_IOMMU_CAP_S_SV57))) {
+                if (!(s->cap & (pass ? RISCV_IOMMU_CAP_SV57X4 : RISCV_IOMMU_CAP_SV57))) {
                     return RISCV_IOMMU_FQ_CAUSE_DDT_MISCONFIGURED;
                 }
                 sc[pass].levels    = 5;
@@ -385,8 +381,8 @@ static int riscv_iommu_spa_fetch(RISCVIOMMUState *s, RISCVIOMMUContext *ctx,
     };
 
     /* S/G stages translation tables root pointers */
-    gatp = PPN_PHYS(get_field(ctx->gatp, RISCV_IOMMU_DC_IOHGATP_PPN));
-    satp = PPN_PHYS(get_field(ctx->satp, RISCV_IOMMU_DC_FSC_PPN));
+    gatp = PPN_PHYS(get_field(ctx->gatp, RISCV_IOMMU_ATP_PPN_FIELD));
+    satp = PPN_PHYS(get_field(ctx->satp, RISCV_IOMMU_ATP_PPN_FIELD));
     addr = (en_s && en_g) ? satp : iotlb->iova;
     base = en_g ? gatp : satp;
     pass = en_g ? G_STAGE : S_STAGE;
@@ -658,9 +654,9 @@ static int riscv_iommu_ctx_fetch(RISCVIOMMUState *s, RISCVIOMMUContext *ctx)
 
     case RISCV_IOMMU_DDTP_MODE_BARE:
         /* mock up pass-through translation context */
-        ctx->gatp = set_field(0, RISCV_IOMMU_DC_IOHGATP_MODE,
+        ctx->gatp = set_field(0, RISCV_IOMMU_ATP_MODE_FIELD,
             RISCV_IOMMU_DC_IOHGATP_MODE_BARE);
-        ctx->satp = set_field(0, RISCV_IOMMU_DC_FSC_MODE,
+        ctx->satp = set_field(0, RISCV_IOMMU_ATP_MODE_FIELD,
             RISCV_IOMMU_DC_FSC_MODE_BARE);
         ctx->tc = RISCV_IOMMU_DC_TC_EN_ATS | RISCV_IOMMU_DC_TC_V;
         ctx->ta = 0;
@@ -1232,11 +1228,9 @@ static void riscv_iommu_ats_inval(RISCVIOMMUState *s,
 
     pasid = get_field(cmd->dword0, RISCV_IOMMU_CMD_ATS_PID);
 
-    /* TODO: convert to RCU list iterator */
     qemu_mutex_lock(&s->core_lock);
     QLIST_FOREACH(as, &s->spaces, list) {
         if (as->devid == devid) {
-            /* TODO: refcount AS ? */
             break;
         }
     }
@@ -1263,7 +1257,7 @@ static void riscv_iommu_ats_inval(RISCVIOMMUState *s,
 static void riscv_iommu_ats_prgr(RISCVIOMMUState *s,
     struct riscv_iommu_command *cmd)
 {
-    /* TODO: notify PRGR */
+    /* TODO: Merge Page Request Group Response impl. */
 }
 
 static void riscv_iommu_process_ddtp(RISCVIOMMUState *s)
@@ -1428,7 +1422,10 @@ static void riscv_iommu_process_cq_tail(RISCVIOMMUState *s)
             break;
 
         default:
-            goto cmd_ill;
+            /* Invalid instruction, do not advance instruction index. */
+            riscv_iommu_reg_mod32(s, RISCV_IOMMU_REG_CQCSR,
+                RISCV_IOMMU_CQCSR_CMD_ILL, 0);
+            goto fault;
         }
 
         /* Advance and update head pointer after command completes. */
@@ -1436,10 +1433,6 @@ static void riscv_iommu_process_cq_tail(RISCVIOMMUState *s)
         riscv_iommu_reg_set32(s, RISCV_IOMMU_REG_CQH, head);
     }
     return;
-
-cmd_ill:
-    /* Invalid instruction, do not advance instruction index. */
-    riscv_iommu_reg_mod32(s, RISCV_IOMMU_REG_CQCSR, RISCV_IOMMU_CQCSR_CMD_ILL, 0);
 
 fault:
     if (ctrl & RISCV_IOMMU_CQCSR_CIE) {
@@ -1457,7 +1450,7 @@ static void riscv_iommu_process_cq_control(RISCVIOMMUState *s)
 
     if (enable && !active) {
         base = riscv_iommu_reg_get64(s, RISCV_IOMMU_REG_CQB);
-        s->cq_mask = (2ULL << get_field(base, RISCV_IOMMU_CQB_ENTRIES)) - 1;
+        s->cq_mask = (2ULL << get_field(base, RISCV_IOMMU_CQB_LOG2SZ)) - 1;
         s->cq_addr = PPN_PHYS(get_field(base, RISCV_IOMMU_CQB_PPN));
         stl_le_p(&s->regs_ro[RISCV_IOMMU_REG_CQT], ~s->cq_mask);
         stl_le_p(&s->regs_rw[RISCV_IOMMU_REG_CQH], 0);
@@ -1487,7 +1480,7 @@ static void riscv_iommu_process_fq_control(RISCVIOMMUState *s)
 
     if (enable && !active) {
         base = riscv_iommu_reg_get64(s, RISCV_IOMMU_REG_FQB);
-        s->fq_mask = (2ULL << get_field(base, RISCV_IOMMU_FQB_ENTRIES)) - 1;
+        s->fq_mask = (2ULL << get_field(base, RISCV_IOMMU_FQB_LOG2SZ)) - 1;
         s->fq_addr = PPN_PHYS(get_field(base, RISCV_IOMMU_FQB_PPN));
         stl_le_p(&s->regs_ro[RISCV_IOMMU_REG_FQH], ~s->fq_mask);
         stl_le_p(&s->regs_rw[RISCV_IOMMU_REG_FQH], 0);
@@ -1517,7 +1510,7 @@ static void riscv_iommu_process_pq_control(RISCVIOMMUState *s)
 
     if (enable && !active) {
         base = riscv_iommu_reg_get64(s, RISCV_IOMMU_REG_PQB);
-        s->pq_mask = (2ULL << get_field(base, RISCV_IOMMU_PQB_ENTRIES)) - 1;
+        s->pq_mask = (2ULL << get_field(base, RISCV_IOMMU_PQB_LOG2SZ)) - 1;
         s->pq_addr = PPN_PHYS(get_field(base, RISCV_IOMMU_PQB_PPN));
         stl_le_p(&s->regs_ro[RISCV_IOMMU_REG_PQH], ~s->pq_mask);
         stl_le_p(&s->regs_rw[RISCV_IOMMU_REG_PQH], 0);
@@ -2146,12 +2139,12 @@ static void riscv_iommu_realize(DeviceState *dev, Error **errp)
         s->cap |= RISCV_IOMMU_CAP_ATS;
     }
     if (s->enable_s_stage) {
-        s->cap |= RISCV_IOMMU_CAP_S_SV32 | RISCV_IOMMU_CAP_S_SV39 |
-                  RISCV_IOMMU_CAP_S_SV48 | RISCV_IOMMU_CAP_S_SV57;
+        s->cap |= RISCV_IOMMU_CAP_SV32 | RISCV_IOMMU_CAP_SV39 |
+                  RISCV_IOMMU_CAP_SV48 | RISCV_IOMMU_CAP_SV57;
     }
     if (s->enable_g_stage) {
-        s->cap |= RISCV_IOMMU_CAP_G_SV32 | RISCV_IOMMU_CAP_G_SV39 |
-                  RISCV_IOMMU_CAP_G_SV48 | RISCV_IOMMU_CAP_G_SV57;
+        s->cap |= RISCV_IOMMU_CAP_SV32X4 | RISCV_IOMMU_CAP_SV39X4 |
+                  RISCV_IOMMU_CAP_SV48X4 | RISCV_IOMMU_CAP_SV57X4;
     }
     if (s->hpm_cntrs > 0) {
         /* Clip number of HPM counters to maximum supported (31). */
@@ -2197,11 +2190,11 @@ static void riscv_iommu_realize(DeviceState *dev, Error **errp)
     stq_le_p(&s->regs_ro[RISCV_IOMMU_REG_DDTP],
         ~(RISCV_IOMMU_DDTP_PPN | RISCV_IOMMU_DDTP_MODE));
     stq_le_p(&s->regs_ro[RISCV_IOMMU_REG_CQB],
-        ~(RISCV_IOMMU_CQB_ENTRIES | RISCV_IOMMU_CQB_PPN));
+        ~(RISCV_IOMMU_CQB_LOG2SZ | RISCV_IOMMU_CQB_PPN));
     stq_le_p(&s->regs_ro[RISCV_IOMMU_REG_FQB],
-        ~(RISCV_IOMMU_FQB_ENTRIES | RISCV_IOMMU_FQB_PPN));
+        ~(RISCV_IOMMU_FQB_LOG2SZ | RISCV_IOMMU_FQB_PPN));
     stq_le_p(&s->regs_ro[RISCV_IOMMU_REG_PQB],
-        ~(RISCV_IOMMU_PQB_ENTRIES | RISCV_IOMMU_PQB_PPN));
+        ~(RISCV_IOMMU_PQB_LOG2SZ | RISCV_IOMMU_PQB_PPN));
     stl_le_p(&s->regs_wc[RISCV_IOMMU_REG_CQCSR], RISCV_IOMMU_CQCSR_CQMF |
         RISCV_IOMMU_CQCSR_CMD_TO | RISCV_IOMMU_CQCSR_CMD_ILL);
     stl_le_p(&s->regs_ro[RISCV_IOMMU_REG_CQCSR], RISCV_IOMMU_CQCSR_CQON |
