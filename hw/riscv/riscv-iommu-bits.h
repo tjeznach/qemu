@@ -33,7 +33,7 @@
 
 /* Common field positions */
 #define RISCV_IOMMU_PPN_FIELD           GENMASK_ULL(53, 10)
-#define RISCV_IOMMU_QUEUE_SIZE_FIELD    GENMASK_ULL(4, 0)    /* As LOG2(size) - 1 */
+#define RISCV_IOMMU_QUEUE_LOGSZ_FIELD   GENMASK_ULL(4, 0)
 #define RISCV_IOMMU_QUEUE_INDEX_FIELD   GENMASK_ULL(31, 0)
 #define RISCV_IOMMU_QUEUE_ENABLE        BIT(0)
 #define RISCV_IOMMU_QUEUE_INTR_ENABLE   BIT(1)
@@ -41,19 +41,21 @@
 #define RISCV_IOMMU_QUEUE_OVERFLOW      BIT(9)
 #define RISCV_IOMMU_QUEUE_ACTIVE        BIT(16)
 #define RISCV_IOMMU_QUEUE_BUSY          BIT(17)
+#define RISCV_IOMMU_ATP_PPN_FIELD       GENMASK_ULL(43, 0)
+#define RISCV_IOMMU_ATP_MODE_FIELD      GENMASK_ULL(63, 60)
 
 /* 5.3 IOMMU Capabilities (64bits) */
 #define RISCV_IOMMU_REG_CAP             0x0000
 #define RISCV_IOMMU_CAP_VERSION         GENMASK_ULL(7, 0)
-#define RISCV_IOMMU_CAP_S_SV32          BIT_ULL(8)
-#define RISCV_IOMMU_CAP_S_SV39          BIT_ULL(9)
-#define RISCV_IOMMU_CAP_S_SV48          BIT_ULL(10)
-#define RISCV_IOMMU_CAP_S_SV57          BIT_ULL(11)
+#define RISCV_IOMMU_CAP_SV32            BIT_ULL(8)
+#define RISCV_IOMMU_CAP_SV39            BIT_ULL(9)
+#define RISCV_IOMMU_CAP_SV48            BIT_ULL(10)
+#define RISCV_IOMMU_CAP_SV57            BIT_ULL(11)
 #define RISCV_IOMMU_CAP_SVPBMT          BIT_ULL(15)
-#define RISCV_IOMMU_CAP_G_SV32          BIT_ULL(16)
-#define RISCV_IOMMU_CAP_G_SV39          BIT_ULL(17)
-#define RISCV_IOMMU_CAP_G_SV48          BIT_ULL(18)
-#define RISCV_IOMMU_CAP_G_SV57          BIT_ULL(19)
+#define RISCV_IOMMU_CAP_SV32X4          BIT_ULL(16)
+#define RISCV_IOMMU_CAP_SV39X4          BIT_ULL(17)
+#define RISCV_IOMMU_CAP_SV48X4          BIT_ULL(18)
+#define RISCV_IOMMU_CAP_SV57X4          BIT_ULL(19)
 #define RISCV_IOMMU_CAP_MSI_FLAT        BIT_ULL(22)
 #define RISCV_IOMMU_CAP_MSI_MRIF        BIT_ULL(23)
 #define RISCV_IOMMU_CAP_AMO             BIT_ULL(24)
@@ -119,7 +121,7 @@ enum riscv_iommu_ddtp_modes {
 
 /* 5.6 Command Queue Base (64bits) */
 #define RISCV_IOMMU_REG_CQB             0x0018
-#define RISCV_IOMMU_CQB_ENTRIES         RISCV_IOMMU_QUEUE_SIZE_FIELD
+#define RISCV_IOMMU_CQB_LOG2SZ          RISCV_IOMMU_QUEUE_LOGSZ_FIELD
 #define RISCV_IOMMU_CQB_PPN             RISCV_IOMMU_PPN_FIELD
 
 /* 5.7 Command Queue head (32bits) */
@@ -133,7 +135,7 @@ enum riscv_iommu_ddtp_modes {
 
 /* 5.9 Fault Queue Base (64bits) */
 #define RISCV_IOMMU_REG_FQB             0x0028
-#define RISCV_IOMMU_FQB_ENTRIES         RISCV_IOMMU_QUEUE_SIZE_FIELD
+#define RISCV_IOMMU_FQB_LOG2SZ          RISCV_IOMMU_QUEUE_LOGSZ_FIELD
 #define RISCV_IOMMU_FQB_PPN             RISCV_IOMMU_PPN_FIELD
 
 /* 5.10 Fault Queue Head (32bits) */
@@ -147,7 +149,7 @@ enum riscv_iommu_ddtp_modes {
 
 /* 5.12 Page Request Queue base (64bits) */
 #define RISCV_IOMMU_REG_PQB             0x0038
-#define RISCV_IOMMU_PQB_ENTRIES         RISCV_IOMMU_QUEUE_SIZE_FIELD
+#define RISCV_IOMMU_PQB_LOG2SZ          RISCV_IOMMU_QUEUE_LOGSZ_FIELD
 #define RISCV_IOMMU_PQB_PPN             RISCV_IOMMU_PPN_FIELD
 
 /* 5.13 Page Request Queue head (32bits) */
@@ -157,7 +159,6 @@ enum riscv_iommu_ddtp_modes {
 /* 5.14 Page Request Queue tail (32bits) */
 #define RISCV_IOMMU_REG_PQT             0x0044
 #define RISCV_IOMMU_PQT_INDEX_MASK      RISCV_IOMMU_QUEUE_INDEX_FIELD
-
 
 /* 5.15 Command Queue CSR (32bits) */
 #define RISCV_IOMMU_REG_CQCSR           0x0048
@@ -368,9 +369,9 @@ struct riscv_iommu_dc {
 #define RISCV_IOMMU_DC_TC_SXL           BIT_ULL(11)
 
 /* Second-stage (aka G-stage) context fields */
-#define RISCV_IOMMU_DC_IOHGATP_PPN      GENMASK_ULL(43, 0)
+#define RISCV_IOMMU_DC_IOHGATP_PPN      RISCV_IOMMU_ATP_PPN_FIELD
 #define RISCV_IOMMU_DC_IOHGATP_GSCID    GENMASK_ULL(59, 44)
-#define RISCV_IOMMU_DC_IOHGATP_MODE     GENMASK_ULL(63, 60)
+#define RISCV_IOMMU_DC_IOHGATP_MODE     RISCV_IOMMU_ATP_MODE_FIELD
 
 /**
  * enum riscv_iommu_dc_iohgatp_modes - Guest address
@@ -399,8 +400,8 @@ enum riscv_iommu_dc_iohgatp_modes {
 #define RISCV_IOMMU_DC_TA_PSCID         GENMASK_ULL(31, 12)
 
 /* First-stage context fields */
-#define RISCV_IOMMU_DC_FSC_PPN          GENMASK_ULL(43, 0)
-#define RISCV_IOMMU_DC_FSC_MODE         GENMASK_ULL(63, 60)
+#define RISCV_IOMMU_DC_FSC_PPN          RISCV_IOMMU_ATP_PPN_FIELD
+#define RISCV_IOMMU_DC_FSC_MODE         RISCV_IOMMU_ATP_MODE_FIELD
 
 /**
  * enum riscv_iommu_dc_fsc_atp_modes - First stage address
@@ -433,8 +434,8 @@ enum riscv_iommu_dc_fsc_atp_modes {
 };
 
 /* MSI page table pointer */
-#define RISCV_IOMMU_DC_MSIPTP_PPN       GENMASK_ULL(43, 0)
-#define RISCV_IOMMU_DC_MSIPTP_MODE      GENMASK_ULL(63, 60)
+#define RISCV_IOMMU_DC_MSIPTP_PPN       RISCV_IOMMU_ATP_PPN_FIELD
+#define RISCV_IOMMU_DC_MSIPTP_MODE      RISCV_IOMMU_ATP_MODE_FIELD
 #define RISCV_IOMMU_DC_MSIPTP_MODE_OFF  0
 #define RISCV_IOMMU_DC_MSIPTP_MODE_FLAT 1
 
@@ -749,4 +750,3 @@ struct riscv_iommu_msi_pte {
 
 
 #endif /* _RISCV_IOMMU_BITS_H_ */
-
