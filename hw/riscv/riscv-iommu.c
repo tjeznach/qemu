@@ -1195,17 +1195,19 @@ done:
 }
 
 /* IOMMU Command Interface */
-static void riscv_iommu_iofence(RISCVIOMMUState *s, bool notify,
+static MemTxResult riscv_iommu_iofence(RISCVIOMMUState *s, bool notify,
     uint64_t addr, uint32_t data)
 {
+    /*
+     * ATS processing in this implementation of the IOMMU is synchronous,
+     * no need to wait for completions here.
+     */
     if (!notify) {
-        return;
+        return MEMTX_OK;
     }
 
-    if (dma_memory_write(s->target_as, addr, &data, sizeof(data),
-                         MEMTXATTRS_UNSPECIFIED) != MEMTX_OK) {
-        riscv_iommu_reg_mod32(s, RISCV_IOMMU_REG_CQCSR, RISCV_IOMMU_CQCSR_CQMF, 0);
-    }
+    return dma_memory_write(s->target_as, addr, &data, sizeof(data),
+        MEMTXATTRS_UNSPECIFIED);
 }
 
 static void riscv_iommu_ats_inval(RISCVIOMMUState *s,
@@ -1332,14 +1334,12 @@ static void riscv_iommu_process_cq_tail(RISCVIOMMUState *s)
         switch (get_field(cmd.dword0, RISCV_IOMMU_CMD_OPCODE | RISCV_IOMMU_CMD_FUNC)) {
         case RISCV_IOMMU_CMD(RISCV_IOMMU_CMD_IOFENCE_FUNC_C,
                              RISCV_IOMMU_CMD_IOFENCE_OPCODE):
-            /* simplified model: ignore PW/PR bits */
-            riscv_iommu_iofence(s,
-                cmd.dword0 & RISCV_IOMMU_CMD_IOFENCE_AV,
-                cmd.dword1,
-                get_field(cmd.dword0, RISCV_IOMMU_CMD_IOFENCE_DATA));
-            /* TODO: Clarify: CQ.IE not expected after IOFENCE? */
-            if (ctrl & RISCV_IOMMU_CQCSR_CIE) {
-                riscv_iommu_notify(s, RISCV_IOMMU_INTR_CQ);
+            res = riscv_iommu_iofence(s, cmd.dword0 & RISCV_IOMMU_CMD_IOFENCE_AV,
+                cmd.dword1, get_field(cmd.dword0, RISCV_IOMMU_CMD_IOFENCE_DATA));
+
+            if (res != MEMTX_OK) {
+                riscv_iommu_reg_mod32(s, RISCV_IOMMU_REG_CQCSR, RISCV_IOMMU_CQCSR_CQMF, 0);
+                goto fault;
             }
             break;
 
@@ -1422,6 +1422,7 @@ static void riscv_iommu_process_cq_tail(RISCVIOMMUState *s)
             break;
 
         default:
+        cmd_ill:
             /* Invalid instruction, do not advance instruction index. */
             riscv_iommu_reg_mod32(s, RISCV_IOMMU_REG_CQCSR,
                 RISCV_IOMMU_CQCSR_CMD_ILL, 0);
