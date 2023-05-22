@@ -463,6 +463,8 @@ static void *edu_fact_thread(void *opaque)
     return NULL;
 }
 
+static void edu_iommu_ats_prgr_notify(IOMMUNotifier *n, IOMMUTLBEntry *iotlb) {}
+
 static void edu_iommu_ats_inval_notify(IOMMUNotifier *n, IOMMUTLBEntry *iotlb) {}
 
 static void edu_iommu_region_add(MemoryListener *listener,
@@ -480,6 +482,7 @@ static void edu_iommu_region_add(MemoryListener *listener,
 
     iommu_mr = IOMMU_MEMORY_REGION(section->mr);
 
+    /* Register ATS.INVAL notifier */
     iommu = g_malloc0(sizeof(*iommu));
     iommu->iommu_mr = iommu_mr;
     iommu->iommu_offset = section->offset_within_address_space -
@@ -492,6 +495,16 @@ static void edu_iommu_region_add(MemoryListener *listener,
                                                    MEMTXATTRS_UNSPECIFIED);
     iommu_notifier_init(&iommu->n, edu_iommu_ats_inval_notify,
                         IOMMU_NOTIFIER_DEVIOTLB_UNMAP,
+                        section->offset_within_region,
+                        int128_get64(end),
+                        iommu_idx);
+    memory_region_register_iommu_notifier(section->mr, &iommu->n, NULL);
+    QLIST_INSERT_HEAD(&edu->iommu_list, iommu, iommu_next);
+
+    /* Register ATS.PRGR notifier */
+    iommu = g_memdup2(iommu, sizeof(*iommu));
+    iommu_notifier_init(&iommu->n, edu_iommu_ats_prgr_notify,
+                        IOMMU_NOTIFIER_MAP,
                         section->offset_within_region,
                         int128_get64(end),
                         iommu_idx);
