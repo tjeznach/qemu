@@ -1236,8 +1236,10 @@ static MemTxResult riscv_iommu_iofence(RISCVIOMMUState *s, bool notify,
         MEMTXATTRS_UNSPECIFIED);
 }
 
-static void riscv_iommu_ats_inval(RISCVIOMMUState *s,
-    struct riscv_iommu_command *cmd)
+static void riscv_iommu_ats(RISCVIOMMUState *s,
+    struct riscv_iommu_command *cmd, IOMMUNotifierFlag flag,
+    IOMMUAccessFlags perm,
+    void (*trace_fn)(const char *id))
 {
     RISCVIOMMUSpace *as = NULL;
     IOMMUNotifier *n;
@@ -1268,24 +1270,35 @@ static void riscv_iommu_ats_inval(RISCVIOMMUState *s,
         return;
     }
 
-    event.type = IOMMU_NOTIFIER_DEVIOTLB_UNMAP;
-    event.entry.perm = IOMMU_NONE;
+    event.type = flag;
+    event.entry.perm = perm;
     event.entry.target_as = s->target_as;
 
     IOMMU_NOTIFIER_FOREACH(n, &as->iova_mr) {
         if (!pv || n->iommu_idx == pasid) {
             event.entry.iova = n->start;
             event.entry.addr_mask = n->end - n->start;
-            trace_riscv_iommu_ats_inval(as->iova_mr.parent_obj.name);
+            trace_fn(as->iova_mr.parent_obj.name);
             memory_region_notify_iommu_one(n, &event);
         }
     }
 }
 
+static void riscv_iommu_ats_inval(RISCVIOMMUState *s,
+    struct riscv_iommu_command *cmd)
+{
+    return riscv_iommu_ats(s, cmd, IOMMU_NOTIFIER_DEVIOTLB_UNMAP, IOMMU_NONE,
+                           trace_riscv_iommu_ats_inval);
+}
+
 static void riscv_iommu_ats_prgr(RISCVIOMMUState *s,
     struct riscv_iommu_command *cmd)
 {
-    /* TODO: Merge Page Request Group Response impl. */
+    unsigned resp_code = get_field(cmd->dword1, RISCV_IOMMU_CMD_ATS_PRGR_RESP_CODE);
+    /* Using the access flag to carry response code information */
+    IOMMUAccessFlags perm = resp_code ? IOMMU_NONE: IOMMU_RW;
+    return riscv_iommu_ats(s, cmd, IOMMU_NOTIFIER_MAP, perm,
+                           trace_riscv_iommu_ats_prgr);
 }
 
 static void riscv_iommu_process_ddtp(RISCVIOMMUState *s)
@@ -2399,14 +2412,6 @@ static int riscv_iommu_memory_region_notify(
     IOMMUNotifierFlag new, Error **errp)
 {
     RISCVIOMMUSpace *as = container_of(iommu_mr, RISCVIOMMUSpace, iova_mr);
-
-    if (new & IOMMU_NOTIFIER_MAP) {
-        error_setg(errp,
-                   "device %02x.%02x.%x requires iommu notifier which is not "
-                   "currently supported", PCI_BUS_NUM(as->devid),
-                   PCI_SLOT(as->devid), PCI_FUNC(as->devid));
-        return -EINVAL;
-    }
 
     if (old == IOMMU_NOTIFIER_NONE) {
         as->notifier = true;
