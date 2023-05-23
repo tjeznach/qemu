@@ -45,6 +45,14 @@ DECLARE_INSTANCE_CHECKER(EduState, EDU,
 #define DMA_START       0x40000
 #define DMA_SIZE        4096
 
+/* 
+ * Number of tries before giving up on page request group response.
+ * Given the timer callback is scheduled to be run again after 100ms,
+ * 10 tries give roughly a second for the PRGR notification to be
+ * received.
+ */
+#define NUM_TRIES       10
+
 struct EduState {
     PCIDevice pdev;
     MemoryRegion mmio;
@@ -85,6 +93,9 @@ struct EduState {
 
     MemoryListener iommu_listener;
     QLIST_HEAD(, edu_iommu) iommu_list;
+
+    bool prgr_rcvd;
+    bool prgr_success;
 };
 
 struct edu_iommu {
@@ -224,11 +235,27 @@ static void edu_dma_timer(void *opaque)
         uint64_t src = edu_clamp_addr(edu, edu->dma.src);
         edu_check_range(dst, edu->dma.cnt, DMA_START, DMA_SIZE);
         dst -= DMA_START;
-        if (edu->try && !(pci_dma_perm(&edu->pdev, src, attrs) & IOMMU_RO)) {
-            edu->try--;
-            /* TODO: PRGR, wait for MAP notification */
-            timer_mod(&edu->dma_timer,
-                      qemu_clock_get_ms(QEMU_CLOCK_VIRTUAL) + 100);
+        if (edu->try-- == NUM_TRIES) {
+            edu->prgr_rcvd = false;
+            if (!(pci_dma_perm(&edu->pdev, src, attrs) & IOMMU_RO)) {
+                timer_mod(&edu->dma_timer,
+                          qemu_clock_get_ms(QEMU_CLOCK_VIRTUAL) + 100);
+                return;
+            }
+        } else if (edu->try) {
+            if (!edu->prgr_rcvd) {
+                timer_mod(&edu->dma_timer,
+                          qemu_clock_get_ms(QEMU_CLOCK_VIRTUAL) + 100);
+                return;
+            }
+            if (!edu->prgr_success) {
+                // PRGR failure, fail DMA.
+                edu->dma.cmd &= ~EDU_DMA_RUN;
+                return;
+            }
+        } else {
+            // timeout, fail DMA.
+            edu->dma.cmd &= ~EDU_DMA_RUN;
             return;
         }
         res = pci_dma_rw(&edu->pdev, src, edu->dma_buf + dst, edu->dma.cnt,
@@ -241,11 +268,27 @@ static void edu_dma_timer(void *opaque)
         uint64_t dst = edu_clamp_addr(edu, edu->dma.dst);
         edu_check_range(src, edu->dma.cnt, DMA_START, DMA_SIZE);
         src -= DMA_START;
-        if (edu->try && !(pci_dma_perm(&edu->pdev, dst, attrs) & IOMMU_WO)) {
-            edu->try--;
-            /* TODO: PRGR, wait for MAP notification */
-            timer_mod(&edu->dma_timer,
-                      qemu_clock_get_ms(QEMU_CLOCK_VIRTUAL) + 100);
+        if (edu->try-- == NUM_TRIES) {
+            edu->prgr_rcvd = false;
+            if (!(pci_dma_perm(&edu->pdev, dst, attrs) & IOMMU_WO)) {
+                timer_mod(&edu->dma_timer,
+                          qemu_clock_get_ms(QEMU_CLOCK_VIRTUAL) + 100);
+                return;
+            }
+        } else if (edu->try) {
+            if (!edu->prgr_rcvd) {
+                timer_mod(&edu->dma_timer,
+                          qemu_clock_get_ms(QEMU_CLOCK_VIRTUAL) + 100);
+                return;
+            }
+            if (!edu->prgr_success) {
+                // PRGR failure, fail DMA.
+                edu->dma.cmd &= ~EDU_DMA_RUN;
+                return;
+            }
+        } else {
+            // timeout, fail DMA.
+            edu->dma.cmd &= ~EDU_DMA_RUN;
             return;
         }
         res = pci_dma_rw(&edu->pdev, dst, edu->dma_buf + src, edu->dma.cnt,
@@ -279,7 +322,7 @@ static void dma_rw(EduState *edu, bool write, dma_addr_t *val, dma_addr_t *dma,
     }
 
     if (timer) {
-        edu->try = 1;
+        edu->try = NUM_TRIES;
         timer_mod(&edu->dma_timer, qemu_clock_get_ms(QEMU_CLOCK_VIRTUAL) + 100);
     }
 }
@@ -463,7 +506,14 @@ static void *edu_fact_thread(void *opaque)
     return NULL;
 }
 
-static void edu_iommu_ats_prgr_notify(IOMMUNotifier *n, IOMMUTLBEntry *iotlb) {}
+static void edu_iommu_ats_prgr_notify(IOMMUNotifier *n, IOMMUTLBEntry *iotlb)
+{
+    struct edu_iommu *iommu = container_of(n, struct edu_iommu, n);
+    EduState *edu = iommu->edu;
+    edu->prgr_success = (iotlb->perm != IOMMU_NONE);
+    barrier();
+    edu->prgr_rcvd = true;
+}
 
 static void edu_iommu_ats_inval_notify(IOMMUNotifier *n, IOMMUTLBEntry *iotlb) {}
 
