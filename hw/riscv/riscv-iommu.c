@@ -272,6 +272,42 @@ static void riscv_iommu_hpm_incr_ctr(RISCVIOMMUState *s, RISCVIOMMUContext *ctx,
     pthread_rwlock_unlock(&s->ht_lock);
 }
 
+/* Portable implementation of pext_u64, bit-mask extraction. */
+static uint64_t _pext_u64(uint64_t val, uint64_t ext)
+{
+    uint64_t ret = 0;
+    uint64_t rot = 1;
+
+    while (ext) {
+        if (ext & 1) {
+            if (val & 1) {
+                ret |= rot;
+            }
+            rot <<= 1;
+        }
+        val >>= 1;
+        ext >>= 1;
+    }
+
+    return ret;
+}
+
+/* Check if GPA matches MSI/MRIF pattern. */
+static bool riscv_iommu_msi_check(RISCVIOMMUState *s, RISCVIOMMUContext *ctx,
+    dma_addr_t gpa)
+{
+    if (get_field(ctx->msiptp, RISCV_IOMMU_DC_MSIPTP_MODE) !=
+        RISCV_IOMMU_DC_MSIPTP_MODE_FLAT) {
+        return false; /* Invalid MSI/MRIF mode */
+    }
+
+    if ((PPN_DOWN(gpa) ^ ctx->msi_addr_pattern) & ~ctx->msi_addr_mask) {
+        return false; /* GPA not in MSI range defined by AIA IMSIC rules. */
+    }
+
+    return true;
+}
+
 /*
  * RISCV IOMMU Address Translation Lookup - Page Table Walk
  *
@@ -309,6 +345,15 @@ static int riscv_iommu_spa_fetch(RISCVIOMMUState *s, RISCVIOMMUContext *ctx,
 
     en_s = satp != RISCV_IOMMU_DC_FSC_MODE_BARE && !gpa;
     en_g = gatp != RISCV_IOMMU_DC_IOHGATP_MODE_BARE;
+
+    /* Early check for MSI address match when IOVA == GPA */
+    if (!en_s && (iotlb->perm & IOMMU_WO) &&
+        riscv_iommu_msi_check(s, ctx, iotlb->iova)) {
+        iotlb->target_as = &s->trap_as;
+        iotlb->translated_addr = iotlb->iova;
+        iotlb->addr_mask = ~TARGET_PAGE_MASK;
+        return 0;
+    }
 
     /* Exit early for pass-through mode. */
     if (!(en_s || en_g)) {
@@ -461,6 +506,16 @@ static int riscv_iommu_spa_fetch(RISCVIOMMUState *s, RISCVIOMMUContext *ctx,
             iotlb->translated_addr = base;
             iotlb->perm = (pte & PTE_W) ? ((pte & PTE_R) ? IOMMU_RW : IOMMU_WO)
                                                          : IOMMU_RO;
+
+            /* Check MSI GPA address match */
+            if (pass == S_STAGE && (iotlb->perm & IOMMU_WO) &&
+                riscv_iommu_msi_check(s, ctx, base)) {
+                /* Trap MSI writes and return GPA address. */
+                iotlb->target_as = &s->trap_as;
+                iotlb->addr_mask = ~TARGET_PAGE_MASK;
+                return 0;
+            }
+
             /* Continue with G-Stage translation? */
             if (!pass && en_g) {
                 pass = G_STAGE;
@@ -469,6 +524,7 @@ static int riscv_iommu_spa_fetch(RISCVIOMMUState *s, RISCVIOMMUContext *ctx,
                 sc[pass].step = 0;
                 continue;
             }
+
             return 0;
         }
 
@@ -492,45 +548,9 @@ static int riscv_iommu_spa_fetch(RISCVIOMMUState *s, RISCVIOMMUContext *ctx,
                         RISCV_IOMMU_FQ_CAUSE_RD_FAULT_S);
 }
 
-/* Portable implementation of pext_u64, bit-mask extraction. */
-static uint64_t _pext_u64(uint64_t val, uint64_t ext)
-{
-    uint64_t ret = 0;
-    uint64_t rot = 1;
-
-    while (ext) {
-        if (ext & 1) {
-            if (val & 1) {
-                ret |= rot;
-            }
-            rot <<= 1;
-        }
-        val >>= 1;
-        ext >>= 1;
-    }
-
-    return ret;
-}
-
-/* Check if IOVA matches MSI/MRIF pattern. */
-static bool riscv_iommu_msi_check(RISCVIOMMUState *s, RISCVIOMMUContext *ctx,
-    dma_addr_t iova)
-{
-    if (get_field(ctx->msiptp, RISCV_IOMMU_DC_MSIPTP_MODE) !=
-        RISCV_IOMMU_DC_MSIPTP_MODE_FLAT) {
-        return false; /* Invalid MSI/MRIF mode */
-    }
-
-    if ((PPN_DOWN(iova) ^ ctx->msi_addr_pattern) & ~ctx->msi_addr_mask) {
-        return false; /* IOVA not in MSI range defined by AIA IMSIC rules. */
-    }
-
-    return true;
-}
-
-/* Redirect MSI write for given IOVA. */
+/* Redirect MSI write for given GPA. */
 static MemTxResult riscv_iommu_msi_write(RISCVIOMMUState *s,
-    RISCVIOMMUContext *ctx, uint64_t iova, uint64_t data,
+    RISCVIOMMUContext *ctx, uint64_t gpa, uint64_t data,
     unsigned size, MemTxAttrs attrs)
 {
     MemTxResult res;
@@ -539,12 +559,12 @@ static MemTxResult riscv_iommu_msi_write(RISCVIOMMUState *s,
     uint32_t n190;
     uint64_t pte[2];
 
-    if (!riscv_iommu_msi_check(s, ctx, iova)) {
+    if (!riscv_iommu_msi_check(s, ctx, gpa)) {
         return MEMTX_ACCESS_ERROR;
     }
 
     /* Interrupt File Number */
-    intn = _pext_u64(PPN_DOWN(iova), ctx->msi_addr_mask);
+    intn = _pext_u64(PPN_DOWN(gpa), ctx->msi_addr_mask);
     if (intn >= 256) {
         /* Interrupt file number out of range */
         return MEMTX_ACCESS_ERROR;
@@ -570,7 +590,12 @@ static MemTxResult riscv_iommu_msi_write(RISCVIOMMUState *s,
     case RISCV_IOMMU_MSI_PTE_M_BASIC:
         /* MSI Pass-through mode */
         addr = PPN_PHYS(get_field(pte[0], RISCV_IOMMU_MSI_PTE_PPN));
-        addr = addr | (iova & TARGET_PAGE_MASK);
+        addr = addr | (gpa & TARGET_PAGE_MASK);
+
+        trace_riscv_iommu_msi(s->parent_obj.id, PCI_BUS_NUM(ctx->devid),
+                              PCI_SLOT(ctx->devid), PCI_FUNC(ctx->devid),
+                              gpa, addr);
+
         return dma_memory_write(s->target_as, addr, &data, size, attrs);
     case RISCV_IOMMU_MSI_PTE_M_MRIF:
         /* MRIF mode, continue. */
@@ -584,7 +609,7 @@ static MemTxResult riscv_iommu_msi_write(RISCVIOMMUState *s,
      * for an IMSIC interrupt file (2047) or destination address is not 32-bit
      * aligned. See IOMMU Specification, Chapter 2.3. MSI page tables.
      */
-    if ((data > 2047) || (iova & 3)) {
+    if ((data > 2047) || (gpa & 3)) {
         return MEMTX_ACCESS_ERROR;
     }
 
@@ -593,6 +618,11 @@ static MemTxResult riscv_iommu_msi_write(RISCVIOMMUState *s,
     /* MRIF pending bit address */
     addr = get_field(pte[0], RISCV_IOMMU_MSI_PTE_MRIF_ADDR) << 9;
     addr = addr | ((data & 0x7c0) >> 3);
+
+    trace_riscv_iommu_msi(s->parent_obj.id, PCI_BUS_NUM(ctx->devid),
+                          PCI_SLOT(ctx->devid), PCI_FUNC(ctx->devid),
+                          gpa, addr);
+
     /* MRIF pending bit mask */
     data = 1ULL << (data & 0x03f);
     res = dma_memory_read(s->target_as, addr, &intn, sizeof(intn), attrs);
@@ -1099,15 +1129,6 @@ static int riscv_iommu_translate(RISCVIOMMUState *s, RISCVIOMMUContext *ctx,
     GHashTable *iot_cache;
     int fault;
 
-    if ((iotlb->perm & IOMMU_WO) &&
-            riscv_iommu_msi_check(s, ctx, iotlb->iova)) {
-        /* Trap MSI writes and return untranslated address. */
-        iotlb->target_as = &s->trap_as;
-        iotlb->translated_addr = iotlb->iova;
-        iotlb->addr_mask = ~TARGET_PAGE_MASK;
-        return 0;
-    }
-
     riscv_iommu_hpm_incr_ctr(s, ctx, RISCV_IOMMU_HPMEVENT_URQ);
 
     iot_cache = g_hash_table_ref(s->iot_cache);
@@ -1147,6 +1168,11 @@ static int riscv_iommu_translate(RISCVIOMMUState *s, RISCVIOMMUContext *ctx,
 
     /* Translate using device directory / page table information. */
     fault = riscv_iommu_spa_fetch(s, ctx, iotlb, false);
+
+    if (!fault && iotlb->target_as == &s->trap_as) {
+        /* Do not cache trapped MSI translations */
+        goto done;
+    }
 
     if (!fault && iotlb->translated_addr != iotlb->iova && enable_cache) {
         iot = g_new0(RISCVIOMMUEntry, 1);
@@ -2061,6 +2087,9 @@ static MemTxResult riscv_iommu_trap_write(void *opaque, hwaddr addr,
     if (attrs.unspecified) {
         return MEMTX_ACCESS_ERROR;
     }
+
+    /* FIXME: PCIe bus remapping for attached endpoints. */
+    devid |= s->bus << 8;
 
     ctx = riscv_iommu_ctx(s, devid, 0, &ref);
     if (ctx == NULL) {
