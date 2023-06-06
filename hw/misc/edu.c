@@ -519,6 +519,7 @@ static void edu_iommu_ats_prgr_notify(IOMMUNotifier *n, IOMMUTLBEntry *iotlb)
     struct edu_iommu *iommu = container_of(n, struct edu_iommu, n);
     EduState *edu = iommu->edu;
     edu->prgr_success = (iotlb->perm != IOMMU_NONE);
+    barrier();
     edu->prgr_rcvd = true;
 }
 
