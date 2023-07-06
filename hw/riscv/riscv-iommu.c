@@ -2468,6 +2468,7 @@ static int riscv_iommu_memory_region_page_request(
     }
     pr.hdr = set_field(pr.hdr, RISCV_IOMMU_PREQ_HDR_DID, ctx->devid);
     pr.payload = (addr & TARGET_PAGE_MASK) | RISCV_IOMMU_PREQ_PAYLOAD_M;
+    pr.payload = set_field(pr.payload, RISCV_IOMMU_PREQ_PRG_INDEX, group_idx);
     riscv_iommu_pri(as->iommu, &pr);
 
     riscv_iommu_ctx_put(as->iommu, ref);
