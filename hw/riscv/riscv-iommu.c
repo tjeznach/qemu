@@ -1148,11 +1148,8 @@ static int riscv_iommu_translate(RISCVIOMMUState *s, RISCVIOMMUContext *ctx,
     iot_cache = g_hash_table_ref(s->iot_cache);
 
     enable_faults = !(ctx->tc & RISCV_IOMMU_DC_TC_DTF);
-    /*
-     * TC[32] is reserved for custom extensions, used here to temporarily
-     * enable automatic page-request generation for ATS queries.
-     */
-    enable_pri = (iotlb->perm == IOMMU_NONE) && (ctx->tc & BIT_ULL(32));
+    enable_pri = (iotlb->perm == IOMMU_NONE) &&
+                 (ctx->tc & RISCV_IOMMU_DC_TC_EN_PRI);
     enable_pasid = (ctx->tc & RISCV_IOMMU_DC_TC_PDTV);
 
     /* Check for ATS request. */
@@ -1202,14 +1199,7 @@ done:
     g_hash_table_unref(iot_cache);
 
     if (enable_pri && fault) {
-        struct riscv_iommu_pq_record pr = {0};
-        if (enable_pasid) {
-            pr.hdr = set_field(RISCV_IOMMU_PREQ_HDR_PV,
-                RISCV_IOMMU_PREQ_HDR_PID, ctx->pasid);
-        }
-        pr.hdr = set_field(pr.hdr, RISCV_IOMMU_PREQ_HDR_DID, ctx->devid);
-        pr.payload = (iotlb->iova & TARGET_PAGE_MASK) | RISCV_IOMMU_PREQ_PAYLOAD_M;
-        riscv_iommu_pri(s, &pr);
+        /* The page request will be directly handled by the PCI device */
         return fault;
     }
 
@@ -2448,6 +2438,43 @@ static IOMMUTLBEntry riscv_iommu_memory_region_translate(
     return iotlb;
 }
 
+/* RISC-V IOMMU Memory Region - Page Request */
+static int riscv_iommu_memory_region_page_request(
+    IOMMUMemoryRegion *iommu_mr, hwaddr addr,
+    int iommu_idx, unsigned group_idx)
+{
+    RISCVIOMMUSpace *as = container_of(iommu_mr, RISCVIOMMUSpace, iova_mr);
+    RISCVIOMMUContext *ctx;
+    void *ref;
+    bool enable_pasid;
+    bool enable_pri;
+
+    ctx = riscv_iommu_ctx(as->iommu, as->devid, iommu_idx, &ref);
+    if (ctx == NULL) {
+        return -1;
+    }
+
+    enable_pri = (ctx->tc & RISCV_IOMMU_DC_TC_EN_PRI);
+    enable_pasid = (ctx->tc & RISCV_IOMMU_DC_TC_PDTV);
+
+    if (!enable_pri) {
+        return -1;
+    }
+
+    struct riscv_iommu_pq_record pr = {0};
+    if (enable_pasid) {
+        pr.hdr = set_field(RISCV_IOMMU_PREQ_HDR_PV,
+            RISCV_IOMMU_PREQ_HDR_PID, ctx->pasid);
+    }
+    pr.hdr = set_field(pr.hdr, RISCV_IOMMU_PREQ_HDR_DID, ctx->devid);
+    pr.payload = (addr & TARGET_PAGE_MASK) | RISCV_IOMMU_PREQ_PAYLOAD_M;
+    riscv_iommu_pri(as->iommu, &pr);
+
+    riscv_iommu_ctx_put(as->iommu, ref);
+
+    return 0;
+}
+
 static int riscv_iommu_memory_region_notify(
     IOMMUMemoryRegion *iommu_mr, IOMMUNotifierFlag old,
     IOMMUNotifierFlag new, Error **errp)
@@ -2526,6 +2553,7 @@ static void riscv_iommu_memory_region_init(ObjectClass *klass, void *data)
     IOMMUMemoryRegionClass *imrc = IOMMU_MEMORY_REGION_CLASS(klass);
 
     imrc->translate = riscv_iommu_memory_region_translate;
+    imrc->page_request = riscv_iommu_memory_region_page_request;
     imrc->notify_flag_changed = riscv_iommu_memory_region_notify;
     imrc->attrs_to_index = riscv_iommu_memory_region_index;
     imrc->num_indexes = riscv_iommu_memory_region_index_len;

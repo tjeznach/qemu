@@ -205,6 +205,10 @@ static int pci_dma_perm(PCIDevice *pdev, dma_addr_t iova, MemTxAttrs attrs)
         /* Translate request with IOMMU_NONE is an ATS request */
         IOMMUTLBEntry iotlb = imrc->translate(iommu_mr, iova, IOMMU_NONE,
                                               iommu_idx);
+        /* Request the page if the translation couldn't be found */
+        if (iotlb.perm == IOMMU_NONE && !iotlb.addr_mask) {
+            imrc->page_request(iommu_mr, iova, iommu_idx, 0);
+        }
 
         return iotlb.perm;
     }
