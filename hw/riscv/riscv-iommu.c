@@ -1244,7 +1244,7 @@ static MemTxResult riscv_iommu_iofence(RISCVIOMMUState *s, bool notify,
 
 static void riscv_iommu_ats(RISCVIOMMUState *s,
     struct riscv_iommu_command *cmd, IOMMUNotifierFlag flag,
-    IOMMUAccessFlags perm,
+    IOMMUAccessFlags perm, uint64_t group_idx,
     void (*trace_fn)(const char *id))
 {
     RISCVIOMMUSpace *as = NULL;
@@ -1282,7 +1282,9 @@ static void riscv_iommu_ats(RISCVIOMMUState *s,
 
     IOMMU_NOTIFIER_FOREACH(n, &as->iova_mr) {
         if (!pv || n->iommu_idx == pasid) {
-            event.entry.iova = n->start;
+            /* Embedding the group index inside the IOVA */
+            event.entry.iova = set_field(n->start, RISCV_IOMMU_PREQ_PRG_INDEX,
+                                         group_idx);
             event.entry.addr_mask = n->end - n->start;
             trace_fn(as->iova_mr.parent_obj.name);
             memory_region_notify_iommu_one(n, &event);
@@ -1293,17 +1295,18 @@ static void riscv_iommu_ats(RISCVIOMMUState *s,
 static void riscv_iommu_ats_inval(RISCVIOMMUState *s,
     struct riscv_iommu_command *cmd)
 {
-    return riscv_iommu_ats(s, cmd, IOMMU_NOTIFIER_DEVIOTLB_UNMAP, IOMMU_NONE,
+    return riscv_iommu_ats(s, cmd, IOMMU_NOTIFIER_DEVIOTLB_UNMAP, IOMMU_NONE, 0,
                            trace_riscv_iommu_ats_inval);
 }
 
 static void riscv_iommu_ats_prgr(RISCVIOMMUState *s,
     struct riscv_iommu_command *cmd)
 {
+    uint64_t group_idx = get_field(cmd->dword1, RISCV_IOMMU_CMD_ATS_PRGR_PRG_INDEX);
     unsigned resp_code = get_field(cmd->dword1, RISCV_IOMMU_CMD_ATS_PRGR_RESP_CODE);
     /* Using the access flag to carry response code information */
     IOMMUAccessFlags perm = resp_code ? IOMMU_NONE : IOMMU_RW;
-    return riscv_iommu_ats(s, cmd, IOMMU_NOTIFIER_MAP, perm,
+    return riscv_iommu_ats(s, cmd, IOMMU_NOTIFIER_MAP, perm, group_idx,
                            trace_riscv_iommu_ats_prgr);
 }
 
