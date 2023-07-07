@@ -121,7 +121,7 @@ static void riscv_iommu_fault(RISCVIOMMUState *s, struct riscv_iommu_fq_record *
     }
 }
 
-static void riscv_iommu_pri(RISCVIOMMUState *s,
+static int riscv_iommu_pri(RISCVIOMMUState *s,
     struct riscv_iommu_pq_record *pr)
 {
     uint32_t ctrl = riscv_iommu_reg_get32(s, RISCV_IOMMU_REG_PQCSR);
@@ -135,7 +135,7 @@ static void riscv_iommu_pri(RISCVIOMMUState *s,
 
     if (!(ctrl & RISCV_IOMMU_PQCSR_PQON) ||
         !!(ctrl & (RISCV_IOMMU_PQCSR_PQOF | RISCV_IOMMU_PQCSR_PQMF))) {
-        return;
+        return -1;
     }
 
     if (head == next) {
@@ -153,6 +153,8 @@ static void riscv_iommu_pri(RISCVIOMMUState *s,
     if (ctrl & RISCV_IOMMU_PQCSR_PIE) {
         riscv_iommu_notify(s, RISCV_IOMMU_INTR_PQ);
     }
+
+    return 0;
 }
 
 static void __hpm_incr_ctr(RISCVIOMMUState *s, uint32_t ctr_idx)
@@ -2448,17 +2450,18 @@ static int riscv_iommu_memory_region_page_request(
     void *ref;
     bool enable_pasid;
     bool enable_pri;
+    int ret = -1;
 
     ctx = riscv_iommu_ctx(as->iommu, as->devid, iommu_idx, &ref);
     if (ctx == NULL) {
-        return -1;
+        return ret;
     }
 
     enable_pri = (ctx->tc & RISCV_IOMMU_DC_TC_EN_PRI);
     enable_pasid = (ctx->tc & RISCV_IOMMU_DC_TC_PDTV);
 
     if (!enable_pri) {
-        return -1;
+        goto done;
     }
 
     struct riscv_iommu_pq_record pr = {0};
@@ -2469,11 +2472,14 @@ static int riscv_iommu_memory_region_page_request(
     pr.hdr = set_field(pr.hdr, RISCV_IOMMU_PREQ_HDR_DID, ctx->devid);
     pr.payload = (addr & TARGET_PAGE_MASK) | RISCV_IOMMU_PREQ_PAYLOAD_M;
     pr.payload = set_field(pr.payload, RISCV_IOMMU_PREQ_PRG_INDEX, group_idx);
-    riscv_iommu_pri(as->iommu, &pr);
+    if (!riscv_iommu_pri(as->iommu, &pr)) {
+        goto done;
+    }
+    ret = 0;
 
+done:
     riscv_iommu_ctx_put(as->iommu, ref);
-
-    return 0;
+    return ret;
 }
 
 static int riscv_iommu_memory_region_notify(
