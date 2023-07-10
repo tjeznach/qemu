@@ -2446,6 +2446,7 @@ static IOMMUTLBEntry riscv_iommu_memory_region_translate(
 /* RISC-V IOMMU Memory Region - Page Request */
 static int riscv_iommu_memory_region_page_request(
     IOMMUMemoryRegion *iommu_mr, hwaddr addr,
+    IOMMUAccessFlags access_flag, bool last_req,
     int iommu_idx, unsigned group_idx)
 {
     RISCVIOMMUSpace *as = container_of(iommu_mr, RISCVIOMMUSpace, iova_mr);
@@ -2454,6 +2455,14 @@ static int riscv_iommu_memory_region_page_request(
     bool enable_pasid;
     bool enable_pri;
     int ret = -1;
+    uint64_t flags;
+
+    /*
+     * Given the implementation doesn't handle requests in several steps, we
+     * expect the caller to set the last-page bit for each request.
+     */
+    assert(last_req);
+    flags = ((uint64_t)last_req << 2) | access_flag;
 
     ctx = riscv_iommu_ctx(as->iommu, as->devid, iommu_idx, &ref);
     if (ctx == NULL) {
@@ -2473,7 +2482,8 @@ static int riscv_iommu_memory_region_page_request(
             RISCV_IOMMU_PREQ_HDR_PID, ctx->pasid);
     }
     pr.hdr = set_field(pr.hdr, RISCV_IOMMU_PREQ_HDR_DID, ctx->devid);
-    pr.payload = (addr & TARGET_PAGE_MASK) | RISCV_IOMMU_PREQ_PAYLOAD_M;
+    pr.payload = addr & TARGET_PAGE_MASK;
+    pr.payload = set_field(pr.payload, RISCV_IOMMU_PREQ_PAYLOAD_M, flags);
     pr.payload = set_field(pr.payload, RISCV_IOMMU_PREQ_PRG_INDEX, group_idx);
     if (!riscv_iommu_pri(as->iommu, &pr)) {
         goto done;

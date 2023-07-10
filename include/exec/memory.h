@@ -401,11 +401,16 @@ struct IOMMUMemoryRegionClass {
      *
      * @hwaddr: address to be translated within the memory region
      *
+     * @access_flag: Access flag (RO, WO or RW)
+     *
+     * @last_req: Indicate last request of the PRG
+     *
      * @iommu_idx: IOMMU index for the translation
      *
      * @group_idx: Page request group index (PRGI)
      */
     int (*page_request)(IOMMUMemoryRegion *iommu, hwaddr addr,
+                        IOMMUAccessFlags access_flag, bool last_req,
                         int iommu_idx, unsigned group_idx);
     /**
      * @get_min_page_size:
