@@ -18,6 +18,7 @@
 
 #include "qemu/osdep.h"
 #include "hw/pci/pci_bus.h"
+#include "hw/irq.h"
 #include "hw/qdev-properties.h"
 #include "hw/sysbus.h"
 #include "qapi/error.h"
@@ -28,30 +29,61 @@
 #include "qemu/osdep.h"
 #include "qom/object.h"
 
+#include "cpu_bits.h"
 #include "riscv-iommu.h"
+#include "riscv-iommu-bits.h"
 
 /* RISC-V IOMMU System Platform Device Emulation */
 
 struct RISCVIOMMUStateSys {
     SysBusDevice     parent;
     uint64_t         addr;
+    qemu_irq         irqs[4];
     RISCVIOMMUState  iommu;
 };
+
+/* interrupt delivery callback */
+static void riscv_iommu_sys_notify(RISCVIOMMUState *iommu, unsigned vector)
+{
+    RISCVIOMMUStateSys *s = container_of(iommu, RISCVIOMMUStateSys, iommu);
+
+    if (vector < RISCV_IOMMU_INTR_COUNT && s->irqs[vector]) {
+        qemu_irq_pulse(s->irqs[vector]);
+    }
+}
 
 static void riscv_iommu_sys_realize(DeviceState *dev, Error **errp)
 {
     RISCVIOMMUStateSys *s = RISCV_IOMMU_SYS(dev);
+    RISCVIOMMUState *iommu = &s->iommu;
     PCIBus *pci_bus;
+    uint64_t cap = iommu->cap;
+    int i;
 
-    qdev_realize(DEVICE(&s->iommu), NULL, errp);
-    sysbus_init_mmio(SYS_BUS_DEVICE(dev), &s->iommu.regs_mr);
+    /* Disable MSI_MRIF, MSI_FLAT; set IGS_WSI */
+    cap = set_field(cap, RISCV_IOMMU_CAP_MSI_FLAT | RISCV_IOMMU_CAP_MSI_MRIF, 0);
+    /* Support WSI only */
+    cap = set_field(cap, RISCV_IOMMU_CAP_IGS, RISCV_IOMMU_CAP_IGS_WSI);
+    qdev_prop_set_uint64(dev, "capabilities", cap);
+
+    if (!qdev_realize(DEVICE(iommu), NULL, errp)) {
+        return;
+    }
+
+    sysbus_init_mmio(SYS_BUS_DEVICE(dev), &iommu->regs_mr);
     if (s->addr) {
         sysbus_mmio_map(SYS_BUS_DEVICE(s), 0, s->addr);
     }
 
+    for (i = 0; i < RISCV_IOMMU_INTR_COUNT; i++) {
+        sysbus_init_irq(&s->parent, &s->irqs[i]);
+    }
+
+    iommu->notify = riscv_iommu_sys_notify;
+
     pci_bus = (PCIBus *) object_resolve_path_type("", TYPE_PCI_BUS, NULL);
     if (pci_bus) {
-        riscv_iommu_pci_setup_iommu(&s->iommu, pci_bus, errp);
+        riscv_iommu_pci_setup_iommu(iommu, pci_bus, errp);
     }
 }
 

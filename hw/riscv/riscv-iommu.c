@@ -660,6 +660,17 @@ static MemTxResult riscv_iommu_msi_write(RISCVIOMMUState *s,
 }
 
 /*
+ * Device Context format.
+ *
+ * @s         : IOMMU Device State
+ * @return    : 0: extended (64 bytes) | 1: base (32 bytes)
+ */
+static int riscv_iommu_dc_is_base(RISCVIOMMUState *s)
+{
+    return !(s->cap & RISCV_IOMMU_CAP_MSI_FLAT);
+}
+
+/*
  * RISC-V IOMMU Device Context Loopkup - Device Directory Tree Walk
  *
  * @s         : IOMMU Device State
@@ -672,8 +683,7 @@ static int riscv_iommu_ctx_fetch(RISCVIOMMUState *s, RISCVIOMMUContext *ctx)
     unsigned mode = get_field(ddtp, RISCV_IOMMU_DDTP_MODE);
     dma_addr_t addr = PPN_PHYS(get_field(ddtp, RISCV_IOMMU_DDTP_PPN));
     struct riscv_iommu_dc dc;
-    /* Device Context format: 0: extended (64 bytes) | 1: base (32 bytes) */
-    const int dc_fmt = !s->enable_msi;
+    const int dc_fmt = riscv_iommu_dc_is_base(s);
     const size_t dc_len = sizeof(dc) >> dc_fmt;
     unsigned depth;
     uint64_t de;
@@ -2172,40 +2182,59 @@ static void riscv_iommu_hpm_timer_cb(void *priv)
 
 static void riscv_iommu_realize(DeviceState *dev, Error **errp)
 {
+    const uint64_t cap_implemented =
+        RISCV_IOMMU_CAP_MSI_FLAT |
+        RISCV_IOMMU_CAP_MSI_MRIF |
+        RISCV_IOMMU_CAP_ATS |
+        RISCV_IOMMU_CAP_SV32 |
+        RISCV_IOMMU_CAP_SV39 |
+        RISCV_IOMMU_CAP_SV48 |
+        RISCV_IOMMU_CAP_SV57 |
+        RISCV_IOMMU_CAP_SV32X4 |
+        RISCV_IOMMU_CAP_SV39X4 |
+        RISCV_IOMMU_CAP_SV48X4 |
+        RISCV_IOMMU_CAP_SV57X4 |
+        RISCV_IOMMU_CAP_MSI_FLAT |
+        RISCV_IOMMU_CAP_MSI_MRIF |
+        RISCV_IOMMU_CAP_ATS |
+        RISCV_IOMMU_CAP_T2GPA |
+        RISCV_IOMMU_CAP_IGS |
+        RISCV_IOMMU_CAP_HPM |
+        RISCV_IOMMU_CAP_DBG |
+        RISCV_IOMMU_CAP_PD8 |
+        RISCV_IOMMU_CAP_PD17 |
+        RISCV_IOMMU_CAP_PD20;
+
     RISCVIOMMUState *s = RISCV_IOMMU(dev);
 
-    s->cap = s->version & RISCV_IOMMU_CAP_VERSION;
-    if (s->enable_msi) {
-        s->cap |= RISCV_IOMMU_CAP_MSI_FLAT | RISCV_IOMMU_CAP_MSI_MRIF;
-    }
-    if (s->enable_ats) {
-        s->cap |= RISCV_IOMMU_CAP_ATS;
-    }
-    if (s->enable_s_stage) {
-        s->cap |= RISCV_IOMMU_CAP_SV32 | RISCV_IOMMU_CAP_SV39 |
-                  RISCV_IOMMU_CAP_SV48 | RISCV_IOMMU_CAP_SV57;
-    }
-    if (s->enable_g_stage) {
-        s->cap |= RISCV_IOMMU_CAP_SV32X4 | RISCV_IOMMU_CAP_SV39X4 |
-                  RISCV_IOMMU_CAP_SV48X4 | RISCV_IOMMU_CAP_SV57X4;
-    }
-    if (s->hpm_cntrs > 0) {
+    s->cap = set_field(s->cap, RISCV_IOMMU_CAP_VERSION, s->version);
+    s->cap &= cap_implemented;
+
+    if (s->hpm_cntrs > RISCV_IOMMU_IOCOUNT_NUM) {
         /* Clip number of HPM counters to maximum supported (31). */
-        if (s->hpm_cntrs > RISCV_IOMMU_IOCOUNT_NUM) {
-            s->hpm_cntrs = RISCV_IOMMU_IOCOUNT_NUM;
-        }
-        /* Enable hardware performance monitor interface */
+        s->hpm_cntrs = RISCV_IOMMU_IOCOUNT_NUM;
+    } else if (s->hpm_cntrs == 0) {
+        /* Disable hardware performance monitor interface */
         s->cap |= RISCV_IOMMU_CAP_HPM;
     }
-    /* Enable translation debug interface */
-    s->cap |= RISCV_IOMMU_CAP_DBG;
+
+    /* Verify supported IGS */
+    switch (get_field(s->cap, RISCV_IOMMU_CAP_IGS)) {
+    case RISCV_IOMMU_CAP_IGS_MSI:
+    case RISCV_IOMMU_CAP_IGS_WSI:
+        break;
+    default:
+        error_setg(errp, "can't support requested IGS mode: cap: %" PRIx64,
+            s->cap);
+        return;
+    }
 
     /* Report QEMU target physical address space limits */
     s->cap = set_field(s->cap, RISCV_IOMMU_CAP_PAS, TARGET_PHYS_ADDR_SPACE_BITS);
 
-    /* TODO: method to report supported PASID bits */
-    s->pasid_bits = 8; /* restricted to size of MemTxAttrs.pasid */
-    s->cap |= RISCV_IOMMU_CAP_PD8;
+    /* Restricted to the size of MemTxAttrs.pasid field. */
+    s->pasid_bits = 8;
+    s->cap &= ~(RISCV_IOMMU_CAP_PD17 | RISCV_IOMMU_CAP_PD20);
 
     /* Out-of-reset translation mode: OFF (DMA disabled) BARE (passthrough) */
     s->ddtp = set_field(0, RISCV_IOMMU_DDTP_MODE, s->enable_off ?
@@ -2330,14 +2359,11 @@ static void riscv_iommu_unrealize(DeviceState *dev)
 static Property riscv_iommu_properties[] = {
     DEFINE_PROP_UINT32("version", RISCVIOMMUState, version,
         RISCV_IOMMU_SPEC_DOT_VER),
+    DEFINE_PROP_UINT64("capabilities", RISCVIOMMUState, cap, ~0ULL),
+    DEFINE_PROP_BOOL("off", RISCVIOMMUState, enable_off, TRUE),
     DEFINE_PROP_UINT32("bus", RISCVIOMMUState, bus, 0x0),
     DEFINE_PROP_UINT32("ioatc-limit", RISCVIOMMUState, iot_limit,
         LIMIT_CACHE_IOT),
-    DEFINE_PROP_BOOL("intremap", RISCVIOMMUState, enable_msi, TRUE),
-    DEFINE_PROP_BOOL("ats", RISCVIOMMUState, enable_ats, TRUE),
-    DEFINE_PROP_BOOL("off", RISCVIOMMUState, enable_off, TRUE),
-    DEFINE_PROP_BOOL("s-stage", RISCVIOMMUState, enable_s_stage, TRUE),
-    DEFINE_PROP_BOOL("g-stage", RISCVIOMMUState, enable_g_stage, TRUE),
     DEFINE_PROP_LINK("downstream-mr", RISCVIOMMUState, target_mr,
         TYPE_MEMORY_REGION, MemoryRegion *),
     DEFINE_PROP_UINT8("hpm-counters", RISCVIOMMUState, hpm_cntrs,

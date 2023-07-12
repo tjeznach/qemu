@@ -62,12 +62,20 @@ static void riscv_iommu_pci_realize(PCIDevice *dev, Error **errp)
 {
     RISCVIOMMUStatePci *s = DO_UPCAST(RISCVIOMMUStatePci, pci, dev);
     RISCVIOMMUState *iommu = &s->iommu;
+    uint64_t cap = iommu->cap;
     Error *err = NULL;
 
     /* Set device id for trace / debug */
     DEVICE(iommu)->id = g_strdup_printf("%02x:%02x.%01x",
         pci_dev_bus_num(dev), PCI_SLOT(dev->devfn), PCI_FUNC(dev->devfn));
-    qdev_realize(DEVICE(iommu), NULL, errp);
+
+    /* Support MSI only */
+    cap = set_field(cap, RISCV_IOMMU_CAP_IGS, RISCV_IOMMU_CAP_IGS_MSI);
+    qdev_prop_set_uint64(DEVICE(dev), "capabilities", cap);
+
+    if (!qdev_realize(DEVICE(iommu), NULL, errp)) {
+        return;
+    }
 
     memory_region_init(&s->bar0, OBJECT(s), "riscv-iommu-bar0",
         QEMU_ALIGN_UP(memory_region_size(&iommu->regs_mr), TARGET_PAGE_SIZE));

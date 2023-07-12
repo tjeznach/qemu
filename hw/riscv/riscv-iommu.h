@@ -35,12 +35,7 @@ struct RISCVIOMMUState {
 
     uint64_t cap;         /* IOMMU supported capabilities */
     uint64_t fctl;        /* IOMMU enabled features */
-
     bool enable_off;      /* Enable out-of-reset OFF mode (DMA disabled) */
-    bool enable_msi;      /* Enable MSI remapping */
-    bool enable_ats;      /* Enable ATS support */
-    bool enable_s_stage;  /* Enable S/VS-Stage translation */
-    bool enable_g_stage;  /* Enable G-Stage translation */
 
     /* IOMMU Internal State */
     uint64_t ddtp;        /* Validated Device Directory Tree Root Pointer */
