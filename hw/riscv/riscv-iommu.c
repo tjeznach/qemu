@@ -2288,7 +2288,7 @@ static void riscv_iommu_realize(DeviceState *dev, Error **errp)
     /* Restricted to the size of MemTxAttrs.pasid field. */
     if (s->cap & RISCV_IOMMU_CAP_PD8) {
         MemTxAttrs attrs = { .pasid = ~0 };
-        s->pasid_bits = ffs(~((unsigned)attrs.pasid)) - 1;
+        s->pasid_bits = ctz32(~((unsigned)attrs.pasid));
     }
 
     /* Adjust reported PD capabilities */
@@ -2602,12 +2602,13 @@ void riscv_iommu_pci_setup_iommu(RISCVIOMMUState *iommu, PCIBus *bus,
 static int riscv_iommu_memory_region_index(IOMMUMemoryRegion *iommu_mr,
     MemTxAttrs attrs)
 {
-    return RISCV_IOMMU_NOPASID;
+    return attrs.unspecified ? RISCV_IOMMU_NOPASID : (int)attrs.pasid;
 }
 
 static int riscv_iommu_memory_region_index_len(IOMMUMemoryRegion *iommu_mr)
 {
-    return 1;
+    RISCVIOMMUSpace *as = container_of(iommu_mr, RISCVIOMMUSpace, iova_mr);
+    return 1 << as->iommu->pasid_bits;
 }
 
 static void riscv_iommu_memory_region_init(ObjectClass *klass, void *data)
