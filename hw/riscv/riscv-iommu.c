@@ -1281,7 +1281,7 @@ static void riscv_iommu_ats(RISCVIOMMUState *s,
     event.entry.target_as = s->target_as;
 
     IOMMU_NOTIFIER_FOREACH(n, &as->iova_mr) {
-        if (!pv || n->iommu_idx == pasid) {
+        if ((!pv || n->iommu_idx == pasid) && (n->notifier_flags & flag)) {
             /* Embedding the group index inside the IOVA */
             event.entry.iova = set_field(n->start, RISCV_IOMMU_PREQ_PRG_INDEX,
                                          group_idx);
