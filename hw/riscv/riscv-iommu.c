@@ -2485,7 +2485,7 @@ static int riscv_iommu_memory_region_page_request(
     pr.payload = addr & TARGET_PAGE_MASK;
     pr.payload = set_field(pr.payload, RISCV_IOMMU_PREQ_PAYLOAD_M, flags);
     pr.payload = set_field(pr.payload, RISCV_IOMMU_PREQ_PRG_INDEX, group_idx);
-    if (!riscv_iommu_pri(as->iommu, &pr)) {
+    if (riscv_iommu_pri(as->iommu, &pr)) {
         goto done;
     }
     ret = 0;
