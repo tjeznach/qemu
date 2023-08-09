@@ -21,6 +21,7 @@
 
 #include "qemu/osdep.h"
 #include "qom/object.h"
+#include "hw/irq.h"
 
 #include "hw/riscv/iommu.h"
 
@@ -32,6 +33,7 @@ struct RISCVIOMMUState {
     uint32_t version;     /* Reported interface version number */
     uint32_t pasid_bits;  /* process identifier width */
     uint32_t bus;         /* PCI bus mapping for non-root endpoints */
+    qemu_irq irqs[4];
 
     uint64_t cap;         /* IOMMU supported capabilities */
     uint64_t fctl;        /* IOMMU enabled features */
@@ -47,9 +49,6 @@ struct RISCVIOMMUState {
     uint32_t cq_mask;     /* Command queue index bit mask */
     uint32_t fq_mask;     /* Fault/event queue index bit mask */
     uint32_t pq_mask;     /* Page request queue index bit mask */
-
-    /* interrupt notifier */
-    void (*notify)(RISCVIOMMUState *iommu, unsigned vector);
 
     /* IOMMU State Machine */
     QemuThread core_proc; /* Background processing thread */
