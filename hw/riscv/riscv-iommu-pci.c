@@ -48,13 +48,12 @@ typedef struct RISCVIOMMUStatePci {
     RISCVIOMMUState  iommu;   /* common IOMMU state */
 } RISCVIOMMUStatePci;
 
-/* interrupt delivery callback */
-static void riscv_iommu_pci_notify(RISCVIOMMUState *iommu, unsigned vector)
+static void pci_msi_handler(void *opaque, int irq_num, int level)
 {
-    RISCVIOMMUStatePci *s = container_of(iommu, RISCVIOMMUStatePci, iommu);
+    PCIDevice *pci_dev = opaque;
 
-    if (msix_enabled(&(s->pci))) {
-        msix_notify(&(s->pci), vector);
+    if (msix_enabled(pci_dev)) {
+        msix_notify(pci_dev, irq_num);
     }
 }
 
@@ -100,12 +99,13 @@ static void riscv_iommu_pci_realize(PCIDevice *dev, Error **errp)
         error_propagate(errp, err);
         return;
     } else {
+        ret = RISCV_IOMMU_INTR_COUNT;
         /* mark all allocated MSIx vectors as used. */
-        msix_vector_use(dev, RISCV_IOMMU_INTR_CQ);
-        msix_vector_use(dev, RISCV_IOMMU_INTR_FQ);
-        msix_vector_use(dev, RISCV_IOMMU_INTR_PM);
-        msix_vector_use(dev, RISCV_IOMMU_INTR_PQ);
-        iommu->notify = riscv_iommu_pci_notify;
+        while (ret-- > 0) {
+            msix_vector_use(dev, ret);
+            qdev_connect_gpio_out_named(DEVICE(s), "msix-irqs", ret,
+                qemu_allocate_irq(pci_msi_handler, dev, ret));
+        }
     }
 
     PCIBus *bus = pci_device_root_bus(dev);
@@ -136,6 +136,8 @@ static void riscv_iommu_pci_init(Object *obj)
 
     object_initialize_child(obj, "iommu", iommu, TYPE_RISCV_IOMMU);
     qdev_alias_all_properties(DEVICE(iommu), obj);
+    qdev_init_gpio_out_named(DEVICE(s), iommu->irqs,
+	"msix-irqs", RISCV_IOMMU_INTR_COUNT);
 }
 
 static Property riscv_iommu_pci_properties[] = {
