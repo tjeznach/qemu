@@ -38,19 +38,8 @@
 struct RISCVIOMMUStateSys {
     SysBusDevice     parent;
     uint64_t         addr;
-    qemu_irq         irqs[4];
     RISCVIOMMUState  iommu;
 };
-
-/* interrupt delivery callback */
-static void riscv_iommu_sys_notify(RISCVIOMMUState *iommu, unsigned vector)
-{
-    RISCVIOMMUStateSys *s = container_of(iommu, RISCVIOMMUStateSys, iommu);
-
-    if (vector < RISCV_IOMMU_INTR_COUNT && s->irqs[vector]) {
-        qemu_irq_pulse(s->irqs[vector]);
-    }
-}
 
 static void riscv_iommu_sys_realize(DeviceState *dev, Error **errp)
 {
@@ -58,7 +47,6 @@ static void riscv_iommu_sys_realize(DeviceState *dev, Error **errp)
     RISCVIOMMUState *iommu = &s->iommu;
     PCIBus *pci_bus;
     uint64_t cap = iommu->cap;
-    int i;
 
     /* Support WSI only */
     cap = set_field(cap, RISCV_IOMMU_CAP_IGS, RISCV_IOMMU_CAP_IGS_WSI);
@@ -73,12 +61,6 @@ static void riscv_iommu_sys_realize(DeviceState *dev, Error **errp)
         sysbus_mmio_map(SYS_BUS_DEVICE(s), 0, s->addr);
     }
 
-    for (i = 0; i < RISCV_IOMMU_INTR_COUNT; i++) {
-        sysbus_init_irq(&s->parent, &s->irqs[i]);
-    }
-
-    iommu->notify = riscv_iommu_sys_notify;
-
     pci_bus = (PCIBus *) object_resolve_path_type("", TYPE_PCI_BUS, NULL);
     if (pci_bus) {
         riscv_iommu_pci_setup_iommu(iommu, pci_bus, errp);
@@ -92,6 +74,8 @@ static void riscv_iommu_sys_init(Object *obj)
 
     object_initialize_child(obj, "iommu", iommu, TYPE_RISCV_IOMMU);
     qdev_alias_all_properties(DEVICE(iommu), obj);
+    qdev_init_gpio_out_named(DEVICE(s), iommu->irqs,
+	SYSBUS_DEVICE_GPIO_IRQ, RISCV_IOMMU_INTR_COUNT);
 }
 
 static Property riscv_iommu_sys_properties[] = {

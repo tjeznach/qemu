@@ -83,8 +83,8 @@ static void riscv_iommu_notify(RISCVIOMMUState *s, int vec)
     const uint32_t ipsr =
         riscv_iommu_reg_mod32(s, RISCV_IOMMU_REG_IPSR, (1 << vec), 0);
     const uint32_t ivec = riscv_iommu_reg_get32(s, RISCV_IOMMU_REG_IVEC);
-    if (s->notify && !(ipsr & (1 << vec))) {
-        s->notify(s, (ivec >> (vec * 4)) & 0x0F);
+    if (!(ipsr & (1 << vec))) {
+	qemu_set_irq(s->irqs[(ivec >> (vec * 4)) & 0x0F], 1);
     }
 }
 
@@ -1414,7 +1414,7 @@ static void riscv_iommu_process_cq_tail(RISCVIOMMUState *s)
             }
             riscv_iommu_iot_inval(s, func,
                 get_field(cmd.dword0, RISCV_IOMMU_CMD_IOTINVAL_GSCID), 0,
-                cmd.dword1 & TARGET_PAGE_MASK);
+                (cmd.dword1 << 2) & TARGET_PAGE_MASK);
             break;
 
         case RISCV_IOMMU_CMD(RISCV_IOMMU_CMD_IOTINVAL_FUNC_VMA,
@@ -1435,7 +1435,7 @@ static void riscv_iommu_process_cq_tail(RISCVIOMMUState *s)
             riscv_iommu_iot_inval(s, func,
                 get_field(cmd.dword0, RISCV_IOMMU_CMD_IOTINVAL_GSCID),
                 get_field(cmd.dword0, RISCV_IOMMU_CMD_IOTINVAL_PSCID),
-                cmd.dword1 & TARGET_PAGE_MASK);
+                (cmd.dword1 << 2) & TARGET_PAGE_MASK);
             break;
 
         case RISCV_IOMMU_CMD(RISCV_IOMMU_CMD_IODIR_FUNC_INVAL_DDT,
