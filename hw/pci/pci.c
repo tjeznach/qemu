@@ -628,6 +628,16 @@ int pci_bus_numa_node(PCIBus *bus)
     return PCI_BUS_GET_CLASS(bus)->numa_node(bus);
 }
 
+int pci_bus_segment(PCIBus *bus)
+{
+    while (!pci_bus_is_root(bus) && bus->parent_dev) {
+	bus = pci_get_bus(bus->parent_dev);
+    }
+
+    return PCI_BUS_GET_CLASS(bus)->bus_segment ?
+           PCI_BUS_GET_CLASS(bus)->bus_segment(bus) : 0;
+}
+
 static int get_pci_config_device(QEMUFile *f, void *pv, size_t size,
                                  const VMStateField *field)
 {

@@ -17,6 +17,7 @@ struct PCIBusClass {
 
     int (*bus_num)(PCIBus *bus);
     uint16_t (*numa_node)(PCIBus *bus);
+    int (*bus_segment)(PCIBus *bus);
 };
 
 enum PCIBusFlags {
