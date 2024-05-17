@@ -2484,6 +2484,31 @@ static IOMMUTLBEntry riscv_iommu_memory_region_translate(
         .perm = flag,
     };
 
+    /* Check device id updates, TODO: SW-4850 */
+    if (as->pdev) {
+        PCIBus *bus = pci_get_bus(as->pdev);
+        uint32_t bus_num = pci_bus_num(bus);
+        uint32_t seg_num = pci_bus_segment(bus);
+        uint32_t devid = PCI_BUILD_BDF(bus_num, as->pdev->devfn);
+        if (!(BIT_ULL(RISCV_IOMMU_DISABLE_PCI_SEGMENT) & as->iommu->disable)) {
+            /* Use segment number */
+            devid = devid | (seg_num << 16);
+        }
+        if (devid != as->devid) {
+            char id_old[32];
+            char id_new[32];
+            snprintf(id_old, sizeof(id_old), "%04x:%02x:%02x.%x",
+                PCI_SEG_NUM(as->devid), PCI_BUS_NUM(as->devid),
+                PCI_SLOT(as->devid), PCI_FUNC(as->devid));
+            snprintf(id_new, sizeof(id_new), "%04x:%02x:%02x.%x",
+                PCI_SEG_NUM(devid), PCI_BUS_NUM(devid),
+                PCI_SLOT(devid), PCI_FUNC(devid));
+            trace_riscv_iommu_update(as->iommu->parent_obj.id, id_old, id_new);
+            as->devid = devid;
+        }
+    }
+
+
     ctx = riscv_iommu_ctx(as->iommu, as->devid, iommu_idx, &ref);
     if (ctx == NULL) {
         /* Translation disabled or invalid. */
