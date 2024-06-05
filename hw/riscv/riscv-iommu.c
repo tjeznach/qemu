@@ -991,7 +991,9 @@ static void riscv_iommu_ctx_inval(RISCVIOMMUState *s, GHFunc func,
         .pasid = pasid,
     };
     ctx_cache = g_hash_table_ref(s->ctx_cache);
+    pthread_rwlock_wrlock(&s->ctx_lock);
     g_hash_table_foreach(ctx_cache, func, &key);
+    pthread_rwlock_unlock(&s->ctx_lock);
     g_hash_table_unref(ctx_cache);
 }
 
@@ -1007,17 +1009,13 @@ static RISCVIOMMUContext *riscv_iommu_ctx(RISCVIOMMUState *s,
     };
 
     ctx_cache = g_hash_table_ref(s->ctx_cache);
+    pthread_rwlock_rdlock(&s->ctx_lock);
     ctx = g_hash_table_lookup(ctx_cache, &key);
+    pthread_rwlock_unlock(&s->ctx_lock);
 
     if (ctx && (ctx->tc & RISCV_IOMMU_DC_TC_V)) {
         *ref = ctx_cache;
         return ctx;
-    }
-
-    if (g_hash_table_size(s->ctx_cache) >= LIMIT_CACHE_CTX) {
-        ctx_cache = g_hash_table_new_full(__ctx_hash, __ctx_equal,
-                                          g_free, NULL);
-        g_hash_table_unref(qatomic_xchg(&s->ctx_cache, ctx_cache));
     }
 
     ctx = g_new0(RISCVIOMMUContext, 1);
@@ -1026,7 +1024,16 @@ static RISCVIOMMUContext *riscv_iommu_ctx(RISCVIOMMUState *s,
 
     int fault = riscv_iommu_ctx_fetch(s, ctx);
     if (!fault) {
+        pthread_rwlock_wrlock(&s->ctx_lock);
+        if (g_hash_table_size(ctx_cache) >= LIMIT_CACHE_CTX) {
+            g_hash_table_unref(ctx_cache);
+            ctx_cache = g_hash_table_new_full(__ctx_hash, __ctx_equal,
+                                              g_free, NULL);
+            g_hash_table_ref(ctx_cache);
+            g_hash_table_unref(qatomic_xchg(&s->ctx_cache, ctx_cache));
+        }
         g_hash_table_add(ctx_cache, ctx);
+        pthread_rwlock_unlock(&s->ctx_lock);
         *ref = ctx_cache;
         return ctx;
     }
@@ -1176,12 +1183,14 @@ static void riscv_iommu_iot_update(RISCVIOMMUState *s,
         return;
     }
 
+    pthread_rwlock_wrlock(&s->iot_lock);
     if (g_hash_table_size(s->iot_cache) >= s->iot_limit) {
         iot_cache = g_hash_table_new_full(__iot_hash, __iot_equal,
                                           g_free, NULL);
         g_hash_table_unref(qatomic_xchg(&s->iot_cache, iot_cache));
     }
     g_hash_table_add(iot_cache, iot);
+    pthread_rwlock_unlock(&s->iot_lock);
 }
 
 static void riscv_iommu_iot_inval(RISCVIOMMUState *s, GHFunc func,
@@ -1195,7 +1204,9 @@ static void riscv_iommu_iot_inval(RISCVIOMMUState *s, GHFunc func,
     };
 
     iot_cache = g_hash_table_ref(s->iot_cache);
+    pthread_rwlock_wrlock(&s->iot_lock);
     g_hash_table_foreach(iot_cache, func, &key);
+    pthread_rwlock_unlock(&s->iot_lock);
     g_hash_table_unref(iot_cache);
 }
 
@@ -1227,7 +1238,9 @@ static int riscv_iommu_translate(RISCVIOMMUState *s, RISCVIOMMUContext *ctx,
         }
     }
 
+    pthread_rwlock_rdlock(&s->iot_lock);
     iot = riscv_iommu_iot_lookup(ctx, iot_cache, iotlb->iova);
+    pthread_rwlock_unlock(&s->iot_lock);
     perm = iot ? iot->perm : IOMMU_NONE;
     if (perm != IOMMU_NONE) {
         iotlb->translated_addr = PPN_PHYS(iot->phys);
@@ -2085,6 +2098,8 @@ static void riscv_iommu_realize(DeviceState *dev, Error **errp)
                                          g_free, NULL);
     s->iot_cache = g_hash_table_new_full(__iot_hash, __iot_equal,
                                          g_free, NULL);
+    pthread_rwlock_init(&s->ctx_lock, NULL);
+    pthread_rwlock_init(&s->iot_lock, NULL);
 
     s->iommus.le_next = NULL;
     s->iommus.le_prev = NULL;

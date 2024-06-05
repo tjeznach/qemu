@@ -71,7 +71,9 @@ struct RISCVIOMMUState {
     MemoryRegion trap_mr;
 
     GHashTable *ctx_cache;          /* Device translation Context Cache */
+    pthread_rwlock_t ctx_lock;      /* Device translation Cache update lock */
     GHashTable *iot_cache;          /* IO Translated Address Cache */
+    pthread_rwlock_t iot_lock;      /* IO TLB Cache update lock */
     unsigned iot_limit;             /* IO Translation Cache size limit */
 
     /* MMIO Hardware Interface */
