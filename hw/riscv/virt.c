@@ -541,8 +541,14 @@ static void create_fdt_one_imsic(RISCVVirtState *s, hwaddr base_addr,
         }
     }
 
-    imsic_name = g_strdup_printf("/soc/interrupt-controller@%lx",
-                                 (unsigned long)base_addr);
+    if (s->legacy_aia_dt) {
+        imsic_name = g_strdup_printf("/soc/imsics@%lx",
+                                     (unsigned long)base_addr);
+    } else {
+        imsic_name = g_strdup_printf("/soc/interrupt-controller@%lx",
+                                     (unsigned long)base_addr);
+    }
+
     qemu_fdt_add_subnode(ms->fdt, imsic_name);
     qemu_fdt_setprop_string_array(ms->fdt, imsic_name, "compatible",
                                   (char **)&imsic_compat,
@@ -552,7 +558,11 @@ static void create_fdt_one_imsic(RISCVVirtState *s, hwaddr base_addr,
                           FDT_IMSIC_INT_CELLS);
     qemu_fdt_setprop(ms->fdt, imsic_name, "interrupt-controller", NULL, 0);
     qemu_fdt_setprop(ms->fdt, imsic_name, "msi-controller", NULL, 0);
-    qemu_fdt_setprop_cell(ms->fdt, imsic_name, "#msi-cells", 0);
+
+    if (!s->legacy_aia_dt) {
+        qemu_fdt_setprop_cell(ms->fdt, imsic_name, "#msi-cells", 0);
+    }
+
     qemu_fdt_setprop(ms->fdt, imsic_name, "interrupts-extended",
                      imsic_cells, ms->smp.cpus * sizeof(uint32_t) * 2);
     qemu_fdt_setprop(ms->fdt, imsic_name, "reg", imsic_regs,
@@ -597,8 +607,12 @@ static void create_fdt_imsic(RISCVVirtState *s, const MemMapEntry *memmap,
 }
 
 /* Caller must free string after use */
-static char *fdt_get_aplic_nodename(unsigned long aplic_addr)
+static char *fdt_get_aplic_nodename(RISCVVirtState *s, long aplic_addr)
 {
+    if (s->legacy_aia_dt) {
+        return g_strdup_printf("/soc/aplic@%lx", aplic_addr);
+    }
+
     return g_strdup_printf("/soc/interrupt-controller@%lx", aplic_addr);
 }
 
@@ -611,7 +625,7 @@ static void create_fdt_one_aplic(RISCVVirtState *s, int socket,
                                  bool m_mode, int num_harts)
 {
     int cpu;
-    g_autofree char *aplic_name = fdt_get_aplic_nodename(aplic_addr);
+    g_autofree char *aplic_name = fdt_get_aplic_nodename(s, aplic_addr);
     g_autofree uint32_t *aplic_cells = g_new0(uint32_t, num_harts * 2);
     MachineState *ms = MACHINE(s);
     static const char * const aplic_compat[2] = {
@@ -648,9 +662,18 @@ static void create_fdt_one_aplic(RISCVVirtState *s, int socket,
     if (aplic_child_phandle) {
         qemu_fdt_setprop_cell(ms->fdt, aplic_name, "riscv,children",
                               aplic_child_phandle);
-        qemu_fdt_setprop_cells(ms->fdt, aplic_name, "riscv,delegation",
-                               aplic_child_phandle, 0x1,
-                               VIRT_IRQCHIP_NUM_SOURCES);
+
+        if (s->legacy_aia_dt) {
+            qemu_fdt_setprop_cells(ms->fdt, aplic_name,
+                                   "riscv,delegate",
+                                   aplic_child_phandle, 0x1,
+                                   VIRT_IRQCHIP_NUM_SOURCES);
+        } else {
+            qemu_fdt_setprop_cells(ms->fdt, aplic_name,
+                                   "riscv,delegation",
+                                   aplic_child_phandle, 0x1,
+                                   VIRT_IRQCHIP_NUM_SOURCES);
+        }
     }
 
     riscv_socket_fdt_write_id(ms, aplic_name, socket);
@@ -692,7 +715,7 @@ static void create_fdt_socket_aplic(RISCVVirtState *s,
                          false, num_harts);
 
     if (!socket) {
-        g_autofree char *aplic_name = fdt_get_aplic_nodename(aplic_addr);
+        g_autofree char *aplic_name = fdt_get_aplic_nodename(s, aplic_addr);
         platform_bus_add_all_fdt_nodes(ms->fdt, aplic_name,
                                        memmap[VIRT_PLATFORM_BUS].base,
                                        memmap[VIRT_PLATFORM_BUS].size,
@@ -1724,6 +1747,20 @@ static void virt_set_acpi(Object *obj, Visitor *v, const char *name,
     visit_type_OnOffAuto(v, name, &s->acpi, errp);
 }
 
+static bool virt_get_legacy_aia_dt(Object *obj, Error **errp)
+{
+    RISCVVirtState *s = RISCV_VIRT_MACHINE(obj);
+
+    return s->legacy_aia_dt;
+}
+
+static void virt_set_legacy_aia_dt(Object *obj, bool value, Error **errp)
+{
+    RISCVVirtState *s = RISCV_VIRT_MACHINE(obj);
+
+    s->legacy_aia_dt = value;
+}
+
 static HotplugHandler *virt_machine_get_hotplug_handler(MachineState *machine,
                                                         DeviceState *dev)
 {
@@ -1814,6 +1851,12 @@ static void virt_machine_class_init(ObjectClass *oc, void *data)
                               NULL, NULL);
     object_class_property_set_description(oc, "acpi",
                                           "Enable ACPI");
+
+    object_class_property_add_bool(oc, "legacy-aia-dt",
+                                   virt_get_legacy_aia_dt,
+                                   virt_set_legacy_aia_dt);
+    object_class_property_set_description(oc, "legacy-aia-dt",
+        "Set to 'on' to use legacy (pre-QEMU 9.1) AIA DT properties");
 }
 
 static const TypeInfo virt_machine_typeinfo = {

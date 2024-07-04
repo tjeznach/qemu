@@ -116,6 +116,20 @@ The following machine-specific options are supported:
   having AIA IMSIC (i.e. "aia=aplic-imsic" selected). When not specified,
   the default number of per-HART VS-level AIA IMSIC pages is 0.
 
+- legacy-aia-dt=[on|off]
+
+  QEMU versions 9.0 and earlier use AIA device tree properties that were deprecated
+  during the AIA development cycle:
+
+  - '/soc/aplic@addr' APLIC node name, changed later to 'interrupt-controller@addr'
+  - APLIC property name 'riscv,delegate' changed later to 'riscv,delegation'
+  - '/soc/imsics@addr' IMSIC node name, changed later to 'interrupt-controller@addr'
+  - IMSIC property '#msi-cells' were absent before, added later
+
+  These changes have the potential to break firmwares that were developed during this
+  timeframe. To circumvent that, this option when set to 'on' makes QEMU use the legacy,
+  pre-QEMU 9.1 AIA device tree properties, to allow these firmwares to work.
+
 Running Linux kernel
 --------------------
 

@@ -62,6 +62,9 @@ struct RISCVVirtState {
     OnOffAuto acpi;
     const MemMapEntry *memmap;
     struct GPEXHost *gpex_host;
+
+    /* Used to indicate the use of pre-9.1 AIA DT properties */
+    bool legacy_aia_dt;
 };
 
 enum {
