@@ -87,6 +87,8 @@ struct riscv_iommu_pq_record {
 #define RISCV_IOMMU_CAP_PD8             BIT_ULL(38)
 #define RISCV_IOMMU_CAP_PD17            BIT_ULL(39)
 #define RISCV_IOMMU_CAP_PD20            BIT_ULL(40)
+#define RISCV_IOMMU_CAP_NL              BIT_ULL(42)
+#define RISCV_IOMMU_CAP_S               BIT_ULL(43)
 
 /* 5.4 Features control register (32bits) */
 #define RISCV_IOMMU_REG_FCTL            0x0008
@@ -279,6 +281,7 @@ struct riscv_iommu_command {
 #define RISCV_IOMMU_CMD_IOTINVAL_PSCV   BIT_ULL(32)
 #define RISCV_IOMMU_CMD_IOTINVAL_GV     BIT_ULL(33)
 #define RISCV_IOMMU_CMD_IOTINVAL_GSCID  GENMASK_ULL(59, 44)
+#define RISCV_IOMMU_CMD_IOTINVAL_S      BIT_ULL(9)
 
 #define RISCV_IOMMU_CMD_IOFENCE_OPCODE          2
 #define RISCV_IOMMU_CMD_IOFENCE_FUNC_C          0
