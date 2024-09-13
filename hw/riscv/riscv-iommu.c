@@ -1221,6 +1221,24 @@ static guint riscv_iommu_iot_hash(gconstpointer v)
     return (guint)t->iova;
 }
 
+/* GV: 1 PSCV: 1 AV: 1 S: 1 */
+static void riscv_iommu_iot_inval_range_iova(gpointer key, gpointer value,
+					     gpointer data)
+{
+    RISCVIOMMUEntry *iot = (RISCVIOMMUEntry *) value;
+    RISCVIOMMUEntry *arg = (RISCVIOMMUEntry *) data;
+    uint64_t mask = (~arg->iova & (~arg->iova - 1)) - 1;
+    uint64_t start = arg->iova & ~mask;
+    uint64_t limit = arg->iova | mask;
+
+    if (iot->gscid == arg->gscid &&
+        iot->pscid == arg->pscid &&
+        iot->iova >= start &&
+        iot->iova <= limit) {
+        iot->perm = IOMMU_NONE;
+    }
+}
+
 /* GV: 1 PSCV: 1 AV: 1 */
 static void riscv_iommu_iot_inval_pscid_iova(gpointer key, gpointer value,
                                              gpointer data)
@@ -1605,6 +1623,10 @@ static void riscv_iommu_process_cq_tail(RISCVIOMMUState *s)
             } else if (!(cmd.dword0 & RISCV_IOMMU_CMD_IOTINVAL_AV)) {
                 /* invalidate cache matching GSCID and PSCID */
                 func = riscv_iommu_iot_inval_pscid;
+            } else if ((s->cap & RISCV_IOMMU_CAP_S) &&
+                       (cmd.dword1 & RISCV_IOMMU_CMD_IOTINVAL_S)) {
+                /* range-size invalidate cache matching GSCID, PSCID and ADDR (IOVA) */
+                func = riscv_iommu_iot_inval_range_iova;
             } else {
                 /* invalidate cache matching GSCID and PSCID and ADDR (IOVA) */
                 func = riscv_iommu_iot_inval_pscid_iova;
@@ -2117,6 +2139,13 @@ static void riscv_iommu_realize(DeviceState *dev, Error **errp)
     if (s->enable_g_stage) {
         s->cap |= RISCV_IOMMU_CAP_SV32X4 | RISCV_IOMMU_CAP_SV39X4 |
                   RISCV_IOMMU_CAP_SV48X4 | RISCV_IOMMU_CAP_SV57X4;
+    }
+    /*
+     * Enable range-size and non-leaf invalidation capabilities.
+     * Based on 'IOMMU ATC Invalidation fast-track extensions' document.
+     */
+    if (s->version > 0x010) {
+        s->cap |= RISCV_IOMMU_CAP_NL | RISCV_IOMMU_CAP_S;
     }
     /* Enable translation debug interface */
     s->cap |= RISCV_IOMMU_CAP_DBG;
