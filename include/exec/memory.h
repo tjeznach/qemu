@@ -400,6 +400,26 @@ struct IOMMUMemoryRegionClass {
     IOMMUTLBEntry (*translate)(IOMMUMemoryRegion *iommu, hwaddr addr,
                                IOMMUAccessFlags flag, int iommu_idx);
     /**
+     * @page_request:
+     *
+     * Returns 0 if the page request has been successfully submitted,
+     * returns -1 otherwise.
+     *
+     * Submit a page request through the IOMMU after the caller realized
+     * the translation isn't available.
+     *
+     * @iommu: the IOMMUMemoryRegion
+     *
+     * @hwaddr: address to be translated within the memory region
+     *
+     * @iommu_idx: IOMMU index for the translation
+     *
+     * @group_idx: Page request group index (PRGI)
+     */
+    int (*page_request)(IOMMUMemoryRegion *iommu, hwaddr addr,
+                        IOMMUAccessFlags access_flag, bool last_req,
+                        int iommu_idx, unsigned group_idx);
+    /**
      * @get_min_page_size:
      *
      * Returns minimum supported page size in bytes.
