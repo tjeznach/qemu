@@ -147,7 +147,7 @@ static void riscv_iommu_fault(RISCVIOMMUState *s,
     }
 }
 
-static void riscv_iommu_pri(RISCVIOMMUState *s,
+static int riscv_iommu_pri(RISCVIOMMUState *s,
     struct riscv_iommu_pq_record *pr)
 {
     uint32_t ctrl = riscv_iommu_reg_get32(s, RISCV_IOMMU_REG_PQCSR);
@@ -161,7 +161,7 @@ static void riscv_iommu_pri(RISCVIOMMUState *s,
 
     if (!(ctrl & RISCV_IOMMU_PQCSR_PQON) ||
         !!(ctrl & (RISCV_IOMMU_PQCSR_PQOF | RISCV_IOMMU_PQCSR_PQMF))) {
-        return;
+        return -1;
     }
 
     if (head == next) {
@@ -181,6 +181,8 @@ static void riscv_iommu_pri(RISCVIOMMUState *s,
     if (ctrl & RISCV_IOMMU_PQCSR_PIE) {
         riscv_iommu_notify(s, RISCV_IOMMU_INTR_PQ);
     }
+
+    return 0;
 }
 
 /*
@@ -1330,11 +1332,8 @@ static int riscv_iommu_translate(RISCVIOMMUState *s, RISCVIOMMUContext *ctx,
     int fault;
 
     iot_cache = g_hash_table_ref(s->iot_cache);
-    /*
-     * TC[32] is reserved for custom extensions, used here to temporarily
-     * enable automatic page-request generation for ATS queries.
-     */
-    enable_pri = (iotlb->perm == IOMMU_NONE) && (ctx->tc & BIT_ULL(32));
+    enable_pri = (iotlb->perm == IOMMU_NONE) &&
+                 (ctx->tc & RISCV_IOMMU_DC_TC_EN_PRI);
     enable_pid = (ctx->tc & RISCV_IOMMU_DC_TC_PDTV);
 
     /* Check for ATS request. */
@@ -1385,15 +1384,7 @@ done:
     g_hash_table_unref(iot_cache);
 
     if (enable_pri && fault) {
-        struct riscv_iommu_pq_record pr = {0};
-        if (enable_pid) {
-            pr.hdr = set_field(RISCV_IOMMU_PREQ_HDR_PV,
-                               RISCV_IOMMU_PREQ_HDR_PID, ctx->process_id);
-        }
-        pr.hdr = set_field(pr.hdr, RISCV_IOMMU_PREQ_HDR_DID, ctx->devid);
-        pr.payload = (iotlb->iova & TARGET_PAGE_MASK) |
-                     RISCV_IOMMU_PREQ_PAYLOAD_M;
-        riscv_iommu_pri(s, &pr);
+        /* The page request will be directly handled by the PCI device */
         return fault;
     }
 
@@ -2309,6 +2300,60 @@ static IOMMUTLBEntry riscv_iommu_memory_region_translate(
     return iotlb;
 }
 
+/* RISC-V IOMMU Memory Region - Page Request */
+static int riscv_iommu_memory_region_page_request(
+    IOMMUMemoryRegion *iommu_mr, hwaddr addr,
+    IOMMUAccessFlags access_flag, bool last_req,
+    int iommu_idx, unsigned group_idx)
+{
+    RISCVIOMMUSpace *as = container_of(iommu_mr, RISCVIOMMUSpace, iova_mr);
+    RISCVIOMMUContext *ctx;
+    void *ref;
+    bool enable_pasid;
+    bool enable_pri;
+    int ret = -1;
+    uint64_t flags;
+    uint32_t devid;
+
+    /*
+     * Given the implementation doesn't handle requests in several steps, we
+     * expect the caller to set the last-page bit for each request.
+     */
+    assert(last_req);
+    flags = ((uint64_t)last_req << 2) | access_flag;
+    devid = pci_requester_id(as->pdev);
+
+    ctx = riscv_iommu_ctx(as->iommu, devid, iommu_idx, &ref);
+    if (ctx == NULL) {
+        return ret;
+    }
+
+    enable_pri = (ctx->tc & RISCV_IOMMU_DC_TC_EN_PRI);
+    enable_pasid = (ctx->tc & RISCV_IOMMU_DC_TC_PDTV);
+
+    if (!enable_pri) {
+        goto done;
+    }
+
+    struct riscv_iommu_pq_record pr = {0};
+    if (enable_pasid) {
+        pr.hdr = set_field(RISCV_IOMMU_PREQ_HDR_PV,
+            RISCV_IOMMU_PREQ_HDR_PID, ctx->process_id);
+    }
+    pr.hdr = set_field(pr.hdr, RISCV_IOMMU_PREQ_HDR_DID, devid);
+    pr.payload = addr & TARGET_PAGE_MASK;
+    pr.payload = set_field(pr.payload, RISCV_IOMMU_PREQ_PAYLOAD_M, flags);
+    pr.payload = set_field(pr.payload, RISCV_IOMMU_PREQ_PRG_INDEX, group_idx);
+    if (riscv_iommu_pri(as->iommu, &pr)) {
+        goto done;
+    }
+    ret = 0;
+
+done:
+    riscv_iommu_ctx_put(as->iommu, ref);
+    return ret;
+}
+
 static int riscv_iommu_memory_region_notify(
     IOMMUMemoryRegion *iommu_mr, IOMMUNotifierFlag old,
     IOMMUNotifierFlag new, Error **errp)
@@ -2396,6 +2441,7 @@ static void riscv_iommu_memory_region_init(ObjectClass *klass, void *data)
     IOMMUMemoryRegionClass *imrc = IOMMU_MEMORY_REGION_CLASS(klass);
 
     imrc->translate = riscv_iommu_memory_region_translate;
+    imrc->page_request = riscv_iommu_memory_region_page_request;
     imrc->notify_flag_changed = riscv_iommu_memory_region_notify;
     imrc->attrs_to_index = riscv_iommu_memory_region_index;
     imrc->num_indexes = riscv_iommu_memory_region_index_len;
